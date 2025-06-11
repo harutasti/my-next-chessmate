@@ -1,14 +1,14 @@
 // src/pages/AnalysisPage.jsx
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { Chess } from "chess.js"; // chess.js v1 (ESM)
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { useRouter } from "next/navigation";
+import useStockfish from "@/app/hooks/useStockfish";
+import ChessMoveAnalyzer from "@/app/utils/chessMoveAnalyzer";
 
-// Tailwind CSSはプロジェクトに設定済みであることを想定
-
-// --- 事前定義PGN ---
+// 事前定義PGN
 const prefilledPgn = `[Event "Live Chess"]
 [Site "Chess.com"]
 [Date "2025.04.27"]
@@ -25,447 +25,890 @@ const prefilledPgn = `[Event "Live Chess"]
 [Link "https://www.chess.com/game/live/137833809614?move=0"]
 
 1. e4 e5 2. Nf3 Nc6 3. Bc4 d6 4. O-O f5 5. exf5 Bxf5 6. d3 e4 7. Bg5 Qd7 8. Re1 Nf6 9. Nc3 O-O-O 10. Bxf6 gxf6 11. dxe4 Bg6 12. Nd5 f5 13. exf5 Bxf5 14. Nh4 Bh3 15. Nf4 d5 16. Bxd5 Bxg2 17. Be6 Rg8 18. Bxd7+ Rxd7 19. Nhxg2 Rxd1 20. Raxd1 Nb4 21. Re8# 1-0`;
-// --- ---
 
 export default function AnalysisPage() {
-  // --- State Hooks ---
+  // State管理
   const [pgn, setPgn] = useState(prefilledPgn);
   const [fen, setFen] = useState("start");
   const [history, setHistory] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoadingPgn, setIsLoadingPgn] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [log, setLog] = useState([]);
-
-  const [engineAnalysis, setEngineAnalysis] = useState({
-    bestMove: null,
-    evaluation: null,
-    line: [],
-    depth: 0,
-    nodes: 0,
-    nps: 0,
-  });
-  const [engineReady, setEngineReady] = useState(false);
-  const [wasmFileStatus, setWasmFileStatus] = useState("WASMファイル検証中..."); // WASMファイル検証用
-
+  const [gameInfo, setGameInfo] = useState({});
+  const [lastMove, setLastMove] = useState(null);
+  const [dynamicBoardWidth, setDynamicBoardWidth] = useState(300);
+  const [moveEvaluations, setMoveEvaluations] = useState({});
+  const [previousEvaluation, setPreviousEvaluation] = useState(null);
+  const [moveExplanations, setMoveExplanations] = useState({});
+  const [previousBestMove, setPreviousBestMove] = useState(null);
+  const [allMovesAnalysis, setAllMovesAnalysis] = useState({});
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const moveAnalyzer = useRef(new ChessMoveAnalyzer());
+  
   const router = useRouter();
-
-  // --- Refs ---
   const chessGame = useRef(null);
   const boardWrapperRef = useRef(null);
-  const stockfishWorker = useRef(null);
+  const latestAnalysisRef = useRef({ evaluation: null, bestMove: null, depth: null });
 
-  // --- State for dynamic board width ---
-  const [dynamicBoardWidth, setDynamicBoardWidth] = useState(300);
+  // Stockfishフックを使用
+  const {
+    isReady: engineReady,
+    isAnalyzing,
+    bestMove,
+    evaluation,
+    depth,
+    nodes,
+    nps,
+    analyzePosition,
+    stopAnalysis,
+  } = useStockfish({
+    difficulty: 20,
+    thinkingTime: 3000,
+  });
 
-  // --- Effects ---
+  // 解析結果が更新されたら、refにも保存
+  useEffect(() => {
+    latestAnalysisRef.current = { evaluation, bestMove, depth };
+  }, [evaluation, bestMove, depth]);
+
+  // 初期化
   useEffect(() => {
     chessGame.current = new Chess();
     setFen(chessGame.current.fen());
-
-    /* ② Stockfish Proxy Worker を起動（1 行で完結） */
-    stockfishWorker.current = new Worker(
-      "/stockfish/stockfish-nnue-16-single.js"
-    );
-
-    const push = (line) => setLog((prev) => [...prev, line].slice(-100));
-
-    /* ③ メッセージ受信ハンドラ */
-    stockfishWorker.current.onmessage = (event) => {
-      const type = typeof event === "string" ? event : event.data;
-      if (type) push(type);
-
-      if (type === "uciok") {
-        setEngineReady(true);
-        setWasmFileStatus("Stockfish エンジン準備完了！");
-        return;
-      }
-
-      if (type === "analysis_update") {
-        console.log("[SF-RAW]", payload); // 必要に応じて parse
-        return;
-      }
-
-      if (type.startsWith("info")) {
-        console.log("解析完了");
-      }
-
-      if (type.startsWith("bestmove")) {
-        const [, best] = type.split(" ");
-        setEngineAnalysis({ bestMove: best });
-        setIsAnalyzing(false);
-      }
-
-      if (type === "analysis_complete") {
-        setIsAnalyzing(false);
-        setEngineAnalysis((prev) => ({ ...prev, ...payload }));
-        return;
-      }
-    };
-
-    stockfishWorker.current.onerror = (e) => {
-      setErrorMessage(`Worker error: ${e.message || "unknown"}`);
-      setEngineReady(false);
-    };
-
-    stockfishWorker.current.postMessage("uci");
-
-    return () => {
-      stockfishWorker.current?.terminate();
-    };
   }, []);
 
+  // ボードサイズの動的調整
   useEffect(() => {
     const calculateBoardSize = () => {
       if (boardWrapperRef.current) {
         const containerWidth = boardWrapperRef.current.offsetWidth;
-        setDynamicBoardWidth(Math.min(containerWidth, 560));
+        // パディングを考慮してほぼ全幅を使用
+        setDynamicBoardWidth(Math.min(containerWidth - 8, 800));
       }
     };
     calculateBoardSize();
     window.addEventListener("resize", calculateBoardSize);
-    return () => {
-      window.removeEventListener("resize", calculateBoardSize);
-    };
+    return () => window.removeEventListener("resize", calculateBoardSize);
   }, []);
 
-  // --- Event Handlers ---
-  const handlePgnChange = (event) => {
-    setPgn(event.target.value);
-    setErrorMessage("");
+  // PGN解析関数
+  const parsePgnHeaders = (pgnText) => {
+    const headers = {};
+    const headerRegex = /\[(\w+)\s+"(.+?)"\]/g;
+    let match;
+    while ((match = headerRegex.exec(pgnText)) !== null) {
+      headers[match[1]] = match[2];
+    }
+    return headers;
   };
 
-  const return_home = () => {
-    router.push("/");
-  };
-
-  const loadPgn = () => {
+  // PGN読み込み
+  const loadPgn = async () => {
     if (isLoadingPgn) return;
     setIsLoadingPgn(true);
-    console.log("loadPgn: Processing started.");
+    
     try {
-      if (!chessGame.current)
-        throw new Error(
-          "チェスエンジンのメインインスタンスが初期化されていません。"
-        );
       chessGame.current.reset();
-
-      let pgnRawInput = pgn;
-      let processedPgn = pgnRawInput
-        .replace(/\r\n/g, "\n")
-        .replace(/\r/g, "\n");
-      processedPgn = processedPgn.replace(
-        /[^a-zA-Z0-9 \n\[\]().#+\-=\/\:?*!"']/g,
-        ""
-      );
-      const lines = processedPgn.split("\n").map((line) => line.trim());
-      const headerLines = [];
-      const movetextParts = [];
-      let inMovetext = false;
-      for (const line of lines) {
-        if (line.startsWith("[") && line.endsWith("]")) {
-          if (inMovetext)
-            console.warn("PGN Warning: Tag found after movetext. Line:", line);
-          headerLines.push(line);
-        } else if (line.length > 0) {
-          inMovetext = true;
-          movetextParts.push(line);
-        }
-      }
-      const headerString = headerLines.join("\n");
-      const movetextString = movetextParts
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim();
-      let pgnToLoad;
-      if (headerString.length > 0 && movetextString.length > 0)
-        pgnToLoad = headerString + "\n\n" + movetextString;
-      else if (movetextString.length > 0) pgnToLoad = movetextString;
-      else if (headerString.length > 0) pgnToLoad = headerString;
-      else pgnToLoad = "";
-      pgnToLoad = pgnToLoad.trim();
-
-      if (pgnToLoad.length === 0 && pgnRawInput.trim().length > 0) {
-        throw new Error("入力されたPGNの内容が処理後に空になりました。");
-      }
-
-      chessGame.current.loadPgn(pgnToLoad, { sloppy: true });
-
+      chessGame.current.loadPgn(pgn, { sloppy: true });
+      
       const newHistory = chessGame.current.history({ verbose: true });
       setHistory(newHistory);
       setCurrentIndex(newHistory.length > 0 ? newHistory.length - 1 : -1);
       setFen(chessGame.current.fen());
-      setEngineAnalysis({
-        bestMove: null,
-        evaluation: null,
-        line: [],
-        depth: 0,
-        nodes: 0,
-        nps: 0,
-      });
+      setGameInfo(parsePgnHeaders(pgn));
       setErrorMessage("");
-      console.log(
-        "User PGN processing completed. History length:",
-        newHistory.length
-      );
-    } catch (error) {
-      console.error("RAW CAUGHT ERROR in loadPgn:", error);
-      setErrorMessage(error.message || "PGNの読み込みに失敗しました。");
-      if (chessGame.current) {
-        chessGame.current.reset();
-        setFen(chessGame.current.fen());
-      } else {
-        setFen("start");
+      
+      // 最後の手をハイライト
+      if (newHistory.length > 0) {
+        const lastMoveData = newHistory[newHistory.length - 1];
+        setLastMove({
+          from: lastMoveData.from,
+          to: lastMoveData.to
+        });
       }
+      
+      // 全ての手を自動的に解析
+      if (newHistory.length > 0) {
+        await analyzeAllMoves(newHistory);
+      }
+    } catch (error) {
+      setErrorMessage(error.message || "PGNの読み込みに失敗しました。");
+      chessGame.current.reset();
+      setFen(chessGame.current.fen());
       setHistory([]);
       setCurrentIndex(-1);
+      setGameInfo({});
+      setLastMove(null);
     } finally {
       setIsLoadingPgn(false);
-      console.log("loadPgn: Processing finished.");
     }
   };
 
-  const navigateMoves = (direction) => {
-    if (!chessGame.current || typeof chessGame.current.move !== "function")
-      return;
-    if (history.length === 0 && direction !== "first") return;
+  // 手の移動
+  const navigateMoves = useCallback((direction) => {
+    if (!chessGame.current || history.length === 0 && direction !== "first") return;
+    
     let newIndex = currentIndex;
     if (direction === "first") newIndex = -1;
     else if (direction === "last") newIndex = history.length - 1;
     else if (direction === "prev") newIndex = Math.max(-1, currentIndex - 1);
-    else if (direction === "next")
-      newIndex = Math.min(history.length - 1, currentIndex + 1);
+    else if (direction === "next") newIndex = Math.min(history.length - 1, currentIndex + 1);
 
     chessGame.current.reset();
     for (let i = 0; i <= newIndex; i++) {
       if (history[i]) chessGame.current.move(history[i]);
     }
+    
     setFen(chessGame.current.fen());
     setCurrentIndex(newIndex);
-    setEngineAnalysis({
-      bestMove: null,
-      evaluation: null,
-      line: [],
-      depth: 0,
-      nodes: 0,
-      nps: 0,
+    
+    // ハイライトを更新
+    if (newIndex >= 0 && history[newIndex]) {
+      setLastMove({
+        from: history[newIndex].from,
+        to: history[newIndex].to
+      });
+    } else {
+      setLastMove(null);
+    }
+    
+    // 評価値をリセット
+    setPreviousEvaluation(null);
+  }, [currentIndex, history]);
+
+  // 特定の手へジャンプ
+  const jumpToMove = (index) => {
+    if (index < -1 || index >= history.length) return;
+    
+    chessGame.current.reset();
+    for (let i = 0; i <= index; i++) {
+      if (history[i]) chessGame.current.move(history[i]);
+    }
+    
+    setFen(chessGame.current.fen());
+    setCurrentIndex(index);
+    
+    if (index >= 0 && history[index]) {
+      setLastMove({
+        from: history[index].from,
+        to: history[index].to
+      });
+    } else {
+      setLastMove(null);
+    }
+  };
+
+  // 解析を実行して結果を返すヘルパー関数
+  const analyzePositionWithResult = (fen) => {
+    return new Promise((resolve) => {
+      let completed = false;
+      
+      // 解析前の値をリセット
+      latestAnalysisRef.current = { evaluation: null, bestMove: null, depth: null };
+      
+      // 解析結果を監視する関数
+      const checkResult = () => {
+        if (!completed) {
+          const current = latestAnalysisRef.current;
+          // タイムアウト前に結果が得られたかチェック
+          if (current.evaluation !== null && current.bestMove !== null && current.depth > 0) {
+            completed = true;
+            console.log(`Analysis complete: eval=${current.evaluation}, bestMove=${current.bestMove}, depth=${current.depth}`);
+            resolve({
+              evaluation: current.evaluation,
+              bestMove: current.bestMove,
+              depth: current.depth
+            });
+          } else {
+            // まだ結果が揃っていない場合は100ms後に再チェック
+            setTimeout(checkResult, 100);
+          }
+        }
+      };
+      
+      // 解析開始
+      console.log(`Starting analysis for position: ${fen}`);
+      analyzePosition(fen);
+      
+      // 結果の監視開始
+      setTimeout(checkResult, 100);
+      
+      // タイムアウト設定（最大5秒）
+      setTimeout(() => {
+        if (!completed) {
+          completed = true;
+          const current = latestAnalysisRef.current;
+          console.warn(`Analysis timeout! Using partial results: eval=${current.evaluation}, bestMove=${current.bestMove}, depth=${current.depth}`);
+          // タイムアウト時は現在の値を返す（nullの場合もある）
+          resolve({
+            evaluation: current.evaluation || 0,
+            bestMove: current.bestMove || null,
+            depth: current.depth || 0
+          });
+        }
+      }, 5000);
     });
   };
 
-  const runAnalysis = () => {
+  // 全ての手を解析
+  const analyzeAllMoves = async (moves) => {
     if (!engineReady) {
       setErrorMessage("Stockfishエンジンが準備できていません。");
-      console.warn(
-        "runAnalysis: Stockfish worker not ready or not initialized."
-      );
       return;
     }
-    if (!chessGame.current) {
-      setErrorMessage("ゲームがロードされていません。");
-      return;
-    }
-    if (isAnalyzing) {
-      console.log("runAnalysis: Stopping current analysis.");
-      stockfishWorker.current.postMessage({ command: "stop" });
-      setIsAnalyzing(false);
-    } else {
-      const currentFen = chessGame.current.fen();
-      console.log("runAnalysis: Requesting analysis for FEN:", currentFen);
-      stockfishWorker.current.postMessage(`position fen ${currentFen}`);
-      stockfishWorker.current.postMessage("go depth 20");
-      stockfishWorker.current.postMessage({
-        command: "analyze",
-        fen: currentFen,
-        depth: 15,
-      });
+    
+    setIsAnalyzingAll(true);
+    setAnalysisProgress(0);
+    const analysisData = {};
+    const tempChess = new Chess();
+    
+    try {
+      // 初期位置を解析
+      tempChess.reset();
+      const initialAnalysis = await analyzePositionWithResult(tempChess.fen());
+      
+      analysisData[-1] = {
+        fen: tempChess.fen(),
+        evaluation: initialAnalysis.evaluation || 0,
+        bestMove: initialAnalysis.bestMove || null,
+        depth: initialAnalysis.depth || 15
+      };
+      
+      // 各手を順番に解析
+      for (let i = 0; i < moves.length; i++) {
+        tempChess.move(moves[i]);
+        const currentFen = tempChess.fen();
+        
+        // 解析開始と結果の取得
+        const analysis = await analyzePositionWithResult(currentFen);
+        
+        // 解析結果を保存
+        analysisData[i] = {
+          fen: currentFen,
+          evaluation: analysis.evaluation || 0,
+          bestMove: analysis.bestMove || null,
+          depth: analysis.depth || 15,
+          previousEval: i > 0 ? analysisData[i-1].evaluation : analysisData[-1].evaluation
+        };
+        
+        // 進捗更新
+        setAnalysisProgress(Math.round(((i + 1) / moves.length) * 100));
+      }
+      
+      setAllMovesAnalysis(analysisData);
+      
+      // 全ての手の説明を生成
+      generateAllExplanations(moves, analysisData);
+      
+    } catch (error) {
+      console.error("Analysis error:", error);
+      setErrorMessage("解析中にエラーが発生しました。");
+    } finally {
+      setIsAnalyzingAll(false);
+      setAnalysisProgress(0);
+      stopAnalysis(); // 解析を停止
     }
   };
+  
+  // 全ての手の説明を生成
+  const generateAllExplanations = (moves, analysisData) => {
+    const explanations = {};
+    
+    moves.forEach((move, index) => {
+      const currentAnalysis = analysisData[index];
+      const previousAnalysis = index > 0 ? analysisData[index - 1] : analysisData[-1];
+      
+      if (currentAnalysis && previousAnalysis) {
+        // 実際にプレイされた手と最善手を比較
+        const playedMove = move.from + move.to + (move.promotion || '');
+        const wasBestMove = previousAnalysis.bestMove && 
+                           (previousAnalysis.bestMove === playedMove || 
+                            previousAnalysis.bestMove.startsWith(playedMove));
+        
+        const currentEvalNum = evaluationToNumber(currentAnalysis.evaluation);
+        const previousEvalNum = evaluationToNumber(previousAnalysis.evaluation);
+        const evalChange = currentEvalNum - previousEvalNum;
+        
+        // 手の品質を判定（最善手の場合は特別扱い）
+        const moveQuality = wasBestMove ? 
+          { quality: 'best', symbol: '!', color: 'text-green-400' } :
+          getMoveQualityFromEval(evalChange, index % 2 === 0);
+        
+        const stockfishData = {
+          evalChange: evalChange,
+          bestMove: previousAnalysis.bestMove,
+          playedMove: playedMove,
+          depth: currentAnalysis.depth,
+          currentEval: currentAnalysis.evaluation,
+          previousEval: previousAnalysis.evaluation,
+          wasBestMove: wasBestMove
+        };
+        
+        const explanation = moveAnalyzer.current.analyzeMoveNaturalLanguage(
+          currentAnalysis.fen,
+          move,
+          previousAnalysis.fen,
+          moveQuality,
+          stockfishData
+        );
+        
+        explanations[index] = explanation;
+      }
+    });
+    
+    setMoveExplanations(explanations);
+    setMoveEvaluations(Object.keys(analysisData).reduce((acc, key) => {
+      if (key !== '-1' && key >= 0) {
+        const move = moves[parseInt(key)];
+        const prevAnalysis = key > 0 ? analysisData[key - 1] : analysisData[-1];
+        const playedMove = move ? move.from + move.to + (move.promotion || '') : '';
+        const wasBestMove = prevAnalysis?.bestMove && 
+                           (prevAnalysis.bestMove === playedMove || 
+                            prevAnalysis.bestMove.startsWith(playedMove));
+        
+        acc[key] = {
+          evaluation: analysisData[key].evaluation,
+          previousEvaluation: analysisData[key].previousEval,
+          wasBestMove: wasBestMove
+        };
+      }
+      return acc;
+    }, {}));
+  };
+  
+  // 評価値を数値に変換するヘルパー関数
+  const evaluationToNumber = (evalValue) => {
+    if (typeof evalValue === 'number') return evalValue;
+    if (typeof evalValue === 'string') {
+      // メイト表記の処理
+      if (evalValue.startsWith('M')) {
+        const mateIn = parseInt(evalValue.substring(1), 10);
+        // メイトの場合は大きな値として扱う (符号付き)
+        return mateIn > 0 ? 100 - Math.abs(mateIn) : -100 + Math.abs(mateIn);
+      }
+    }
+    return 0; // デフォルト値
+  };
 
-  // --- Render ---
+  // 評価値から手の品質を判定
+  const getMoveQualityFromEval = (evalChange, isWhiteMove) => {
+    const adjustedDiff = isWhiteMove ? evalChange : -evalChange;
+    
+    if (adjustedDiff >= 0) return { quality: 'good', symbol: '!', color: 'text-green-400' };
+    if (adjustedDiff >= -0.5) return { quality: 'ok', symbol: '', color: 'text-gray-400' };
+    if (adjustedDiff >= -1.0) return { quality: 'inaccuracy', symbol: '?!', color: 'text-yellow-400' };
+    if (adjustedDiff >= -2.0) return { quality: 'mistake', symbol: '?', color: 'text-orange-400' };
+    return { quality: 'blunder', symbol: '??', color: 'text-red-400' };
+  };
+  
+  // 現在表示している局面の解析データを取得して、説明を更新
+  useEffect(() => {
+    if (currentIndex >= -1 && allMovesAnalysis[currentIndex]) {
+      // 現在の局面の解析データがあれば、UI更新のみ
+      // (説明は既に generateAllExplanations で生成済み)
+    }
+  }, [currentIndex, allMovesAnalysis]);
+  
+  // 手の品質を判定
+  const getMoveQuality = (moveIndex) => {
+    const moveEval = moveEvaluations[moveIndex];
+    if (!moveEval || moveEval.previousEvaluation === null) return null;
+    
+    // 最善手を指した場合は特別扱い
+    if (moveEval.wasBestMove) {
+      return { quality: 'best', symbol: '!', color: 'text-green-400' };
+    }
+    
+    const currentEvalNum = evaluationToNumber(moveEval.evaluation);
+    const previousEvalNum = evaluationToNumber(moveEval.previousEvaluation);
+    const evalDiff = currentEvalNum - previousEvalNum;
+    const isWhiteMove = moveIndex % 2 === 0;
+    const adjustedDiff = isWhiteMove ? evalDiff : -evalDiff;
+    
+    if (adjustedDiff >= -0.3) return { quality: 'good', symbol: '', color: 'text-gray-400' };
+    if (adjustedDiff >= -0.5) return { quality: 'ok', symbol: '', color: 'text-gray-400' };
+    if (adjustedDiff >= -1.0) return { quality: 'inaccuracy', symbol: '?!', color: 'text-yellow-400' };
+    if (adjustedDiff >= -2.0) return { quality: 'mistake', symbol: '?', color: 'text-orange-400' };
+    return { quality: 'blunder', symbol: '??', color: 'text-red-400' };
+  };
+
+  // 評価値の表示形式を整える
+  const formatEvaluation = (eval_) => {
+    if (eval_ === null || eval_ === undefined) return "0.00";
+    if (typeof eval_ === "string") return eval_;
+    if (typeof eval_ === "number") return eval_.toFixed(2);
+    return "0.00";
+  };
+
+  // 評価バーの幅を計算
+  const getEvalBarWidth = () => {
+    if (!evaluation) return 50;
+    if (typeof evaluation === "string") {
+      // メイト表記の場合
+      return evaluation.startsWith("M") ? 100 : 0;
+    }
+    // 評価値を-10から+10の範囲に制限してパーセンテージに変換
+    const clampedEval = Math.max(-10, Math.min(10, evaluation));
+    return 50 + (clampedEval * 5);
+  };
+  
+  // 特定の評価値に対するバーの幅を計算
+  const getEvalBarWidthForValue = (evalValue) => {
+    if (!evalValue && evalValue !== 0) return 50;
+    const numericEval = evaluationToNumber(evalValue);
+    // 評価値を-10から+10の範囲に制限してパーセンテージに変換
+    const clampedEval = Math.max(-10, Math.min(10, numericEval));
+    return 50 + (clampedEval * 5);
+  };
+
   return (
-    <div className="min-h-screen bg-stone-50 text-black flex flex-col items-center p-4 font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white flex flex-col items-center p-4">
+      {/* ヘッダー */}
       <header className="mb-6 text-center">
-        <h1 className="text-4xl font-bold text-stone-900">解析画面</h1>
-        <p className="text-stone-700 mb-2">
-          保存された棋譜や解析結果を確認できます。
-        </p>
+        <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
+          棋譜解析
+        </h1>
+        <p className="text-gray-400 mt-2">PGN形式の棋譜を読み込んで解析します</p>
         <button
-          onClick={return_home}
-          className="mt-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md transition duration-150 ease-in-out shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => router.push("/")}
+          className="mt-3 group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
         >
           ホームに戻る
         </button>
       </header>
 
-      <div className="w-full max-w-2xl mb-6 p-6 bg-gray-800 rounded-lg shadow-xl">
-        <h3 className="text-2xl font-semibold mb-3 text-stone-50">
-          1. PGN入力
-        </h3>
-        <textarea
-          value={pgn}
-          onChange={handlePgnChange}
-          placeholder="ここにPGN形式の棋譜を貼り付けてください..."
-          rows="12"
-          className="w-full p-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
-          disabled={isLoadingPgn}
-        />
-        <button
-          onClick={loadPgn}
-          className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md transition duration-150 ease-in-out shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={isLoadingPgn}
-        >
-          {isLoadingPgn ? "読み込み中..." : "PGNを読み込む"}
-        </button>
-        {errorMessage && (
-          <p className="mt-2 text-sm text-red-500">{errorMessage}</p>
-        )}
-        {/* WASMファイル検証とエンジン準備状態の表示 */}
-        <p
-          className={`mt-2 text-sm ${
-            engineReady && !errorMessage
-              ? "text-green-500 font-semibold"
-              : errorMessage
-              ? "text-red-500"
-              : "text-blue-400"
-          }`}
-        >
-          {wasmFileStatus}
-        </p>
+      {/* PGN入力エリア */}
+      <div className="w-full max-w-7xl mb-6">
+        <div className="bg-gray-800 rounded-xl shadow-2xl p-6 border border-gray-700">
+          <h3 className="text-xl font-semibold mb-3 flex items-center">
+            <span className="mr-2">📝</span> PGN入力
+          </h3>
+          <textarea
+            value={pgn}
+            onChange={(e) => setPgn(e.target.value)}
+            placeholder="ここにPGN形式の棋譜を貼り付けてください..."
+            rows="8"
+            className="w-full p-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-sm"
+            disabled={isLoadingPgn}
+          />
+          <div className="mt-3 flex items-center justify-between">
+            <button
+              onClick={loadPgn}
+              className="group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 px-8 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isLoadingPgn || isAnalyzingAll}
+            >
+              <span className="relative z-10">
+                {isLoadingPgn ? "読み込み中..." : 
+                 isAnalyzingAll ? `解析中... ${analysisProgress}%` : 
+                 "PGNを読み込む"}
+              </span>
+              <div className="absolute inset-0 rounded-lg bg-white/0 group-hover:bg-white/10 transition-all duration-300"></div>
+            </button>
+            {errorMessage && (
+              <p className="text-red-400 text-sm">{errorMessage}</p>
+            )}
+            {engineReady && !isAnalyzingAll && (
+              <span className="text-green-400 text-sm flex items-center">
+                <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></span>
+                エンジン準備完了
+              </span>
+            )}
+            {isAnalyzingAll && (
+              <div className="text-blue-400 text-sm">
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
+                  <span>全手解析中... {analysisProgress}%</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                  <div 
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${analysisProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="w-full max-w-5xl flex flex-col lg:flex-row gap-6">
-        {/* チェス盤エリア */}
-        <div className="lg:w-1/2 w-full p-6 bg-gray-800 rounded-lg shadow-xl flex flex-col items-center">
-          <h3 className="text-2xl font-semibold mb-4 text-stone-50">
-            2. チェス盤
-          </h3>
-          <div ref={boardWrapperRef} className="w-full max-w-md aspect-square">
-            <Chessboard
-              position={fen}
-              arePiecesDraggable={false}
-              boardWidth={dynamicBoardWidth}
-              customDarkSquareStyle={{ backgroundColor: "#4A5568" }}
-              customLightSquareStyle={{ backgroundColor: "#A0AEC0" }}
-            />
-          </div>
-          <p className="mt-3 text-sm text-gray-400 break-all w-full max-w-md text-center">
-            FEN: {fen}
-          </p>
-        </div>
-
-        {/* 操作・解析エリア */}
-        <div className="lg:w-1/2 w-full p-6 bg-gray-800 rounded-lg shadow-xl">
-          <h3 className="text-2xl font-semibold mb-4 text-stone-50">
-            3. 棋譜操作 & 解析
-          </h3>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <button
-              onClick={() => navigateMoves("first")}
-              className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
-              disabled={
-                isLoadingPgn || (currentIndex === -1 && history.length === 0)
-              }
-            >
-              最初へ
-            </button>
-            <button
-              onClick={() => navigateMoves("prev")}
-              className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
-              disabled={isLoadingPgn || currentIndex < 0}
-            >
-              一手戻る
-            </button>
-            <button
-              onClick={() => navigateMoves("next")}
-              className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
-              disabled={isLoadingPgn || currentIndex >= history.length - 1}
-            >
-              一手進む
-            </button>
-            <button
-              onClick={() => navigateMoves("last")}
-              className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
-              disabled={
-                isLoadingPgn ||
-                history.length === 0 ||
-                currentIndex === history.length - 1
-              }
-            >
-              最後へ
-            </button>
-          </div>
-
-          <p className="mb-3 text-gray-300">
-            現在の局面:{" "}
-            {currentIndex === -1 ? "初期局面" : `${currentIndex + 1}手目`}
-            {history.length > 0 &&
-              currentIndex >= 0 &&
-              history[currentIndex] && (
-                <span className="ml-2 font-mono p-1 bg-gray-700 rounded text-sm">
-                  {history[currentIndex].san}
-                </span>
-              )}
-          </p>
-
-          <button
-            onClick={runAnalysis}
-            className={`w-full text-white font-semibold py-2 px-4 rounded-md transition shadow-md mb-4 ${
-              isAnalyzing
-                ? "bg-red-600 hover:bg-red-700"
-                : "bg-green-600 hover:bg-green-700"
-            } disabled:bg-gray-500 disabled:cursor-not-allowed`}
-            disabled={
-              !engineReady ||
-              isLoadingPgn ||
-              !chessGame.current ||
-              typeof chessGame.current.history !== "function"
-            }
-          >
-            {isAnalyzing ? "解析停止" : "現在の局面を解析"}
-          </button>
-
-          {(isAnalyzing ||
-            engineAnalysis.bestMove ||
-            engineAnalysis.evaluation !== null) && (
-            <div className="p-4 bg-gray-700 rounded-md text-sm">
-              <h4 className="text-lg font-semibold text-green-300 mb-2">
-                {isAnalyzing ? "解析中..." : "解析結果"}
-              </h4>
-              {/* {engineAnalysis.evaluation !== null && (
-                <p className="text-gray-300">
-                  評価値: <span className="font-bold text-white">{typeof engineAnalysis.evaluation === 'number' ? engineAnalysis.evaluation.toFixed(2) : engineAnalysis.evaluation}</span>
-                </p>
-              )} */}
-              {engineAnalysis.bestMove && (
-                <p className="text-gray-300">
-                  最善手 (候補):{" "}
-                  <span className="font-bold text-white font-mono">
-                    {engineAnalysis.bestMove}
-                  </span>
-                </p>
-              )}
-              {/* {engineAnalysis.line && engineAnalysis.line.length > 0 && (
-                <p className="text-gray-300">
-                  読み筋: <span className="font-mono text-xs text-gray-400">{engineAnalysis.line.join(' ')}</span>
-                </p>
-              )}
-               <p className="text-gray-400 text-xs mt-2">
-                  深さ: <span className="font-semibold text-gray-300">{engineAnalysis.depth}</span>,
-                  Nodes: <span className="font-semibold text-gray-300">{engineAnalysis.nodes.toLocaleString()}</span>
-                  {engineAnalysis.nps > 0 && (
-                    <>, NPS: <span className="font-semibold text-gray-300">{engineAnalysis.nps.toLocaleString()}</span></>
-                  )}
-                </p> */}
+      {/* メインコンテンツ */}
+      <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 左側・中央：チェス盤（より大きく） */}
+        <div className="lg:col-span-2">
+          <div className="bg-gray-800 rounded-xl shadow-2xl p-2 border border-gray-700">
+            <div ref={boardWrapperRef} className="w-full aspect-square">
+              <Chessboard
+                position={fen}
+                arePiecesDraggable={false}
+                boardWidth={dynamicBoardWidth}
+                customDarkSquareStyle={{ backgroundColor: "#1e3a5f" }}
+                customLightSquareStyle={{ backgroundColor: "#e8eef5" }}
+                customSquareStyles={{
+                  ...(lastMove && {
+                    [lastMove.from]: { backgroundColor: "rgba(255, 255, 0, 0.4)" },
+                    [lastMove.to]: { backgroundColor: "rgba(255, 255, 0, 0.4)" }
+                  }),
+                  ...((allMovesAnalysis[currentIndex]?.bestMove || bestMove) && {
+                    [(allMovesAnalysis[currentIndex]?.bestMove || bestMove).substring(0, 2)]: { 
+                      backgroundColor: "rgba(0, 255, 0, 0.3)",
+                      border: "2px solid #00ff00"
+                    },
+                    [(allMovesAnalysis[currentIndex]?.bestMove || bestMove).substring(2, 4)]: { 
+                      backgroundColor: "rgba(0, 255, 0, 0.3)",
+                      border: "2px solid #00ff00"
+                    }
+                  })
+                }}
+              />
             </div>
-          )}
+            
+            {/* ナビゲーションボタン */}
+            <div className="grid grid-cols-4 gap-2 mt-2">
+              <button
+                onClick={() => navigateMoves("first")}
+                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                disabled={isLoadingPgn || (currentIndex === -1 && history.length === 0)}
+              >
+                <span className="flex items-center justify-center gap-1">
+                  <span className="text-lg">⏮️</span>
+                  <span className="text-xs hidden sm:inline">最初</span>
+                </span>
+                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+              </button>
+              <button
+                onClick={() => navigateMoves("prev")}
+                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                disabled={isLoadingPgn || currentIndex < 0}
+              >
+                <span className="flex items-center justify-center gap-1">
+                  <span className="text-lg">◀️</span>
+                  <span className="text-xs hidden sm:inline">戻る</span>
+                </span>
+                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+              </button>
+              <button
+                onClick={() => navigateMoves("next")}
+                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                disabled={isLoadingPgn || currentIndex >= history.length - 1}
+              >
+                <span className="flex items-center justify-center gap-1">
+                  <span className="text-xs hidden sm:inline">進む</span>
+                  <span className="text-lg">▶️</span>
+                </span>
+                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+              </button>
+              <button
+                onClick={() => navigateMoves("last")}
+                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                disabled={isLoadingPgn || history.length === 0 || currentIndex === history.length - 1}
+              >
+                <span className="flex items-center justify-center gap-1">
+                  <span className="text-xs hidden sm:inline">最後</span>
+                  <span className="text-lg">⏭️</span>
+                </span>
+                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 右側：解析パネル */}
+        <div className="lg:col-span-1">
+          <div className="bg-gray-800 rounded-xl shadow-2xl p-4 border border-gray-700">
+            <h3 className="text-lg font-semibold mb-3 flex items-center justify-between">
+              <span className="flex items-center">
+                <span className="mr-2">🔍</span> エンジン解析
+              </span>
+              {/* 解析状態の表示 */}
+              {allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0 && (
+                <div className="text-xs text-green-400 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                  <span>全ての手を解析済み</span>
+                </div>
+              )}
+            </h3>
+
+            {/* 現在の局面の評価バー */}
+            {currentIndex >= -1 && allMovesAnalysis[currentIndex] && (
+              <div className="mb-4">
+                <div className="h-8 bg-gray-700 rounded-lg overflow-hidden relative">
+                  <div
+                    className="h-full bg-gradient-to-r from-gray-100 to-white transition-all duration-500"
+                    style={{ width: `${getEvalBarWidthForValue(allMovesAnalysis[currentIndex].evaluation)}%` }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold">
+                    <span className={allMovesAnalysis[currentIndex].evaluation && getEvalBarWidthForValue(allMovesAnalysis[currentIndex].evaluation) > 50 ? "text-gray-800" : "text-gray-200"}>
+                      {typeof allMovesAnalysis[currentIndex].evaluation === 'number' ? 
+                        allMovesAnalysis[currentIndex].evaluation.toFixed(2) : 
+                        allMovesAnalysis[currentIndex].evaluation || '0.00'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>黒優勢</span>
+                  <span>白優勢</span>
+                </div>
+              </div>
+            )}
+
+            {/* メトリクス情報 */}
+            {allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0 && (
+              <div className="space-y-3">
+
+              {/* 手の評価 */}
+              {currentIndex >= 0 && (
+                <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-4 border border-gray-600">
+                  <div className="text-sm text-gray-400 font-medium mb-3">現在の手の評価</div>
+                  <div className="space-y-3">
+                    {/* 手の品質 */}
+                    {(() => {
+                      const quality = getMoveQuality(currentIndex);
+                      const moveEval = moveEvaluations[currentIndex];
+                      return quality ? (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold flex items-center gap-2">
+                            <span className={quality.color}>{history[currentIndex].san}</span>
+                            {quality.symbol && (
+                              <span className={`text-lg font-bold ${quality.color}`}>
+                                {quality.symbol}
+                              </span>
+                            )}
+                          </span>
+                          <span className={`text-xs px-2 py-1 rounded ${
+                            quality.quality === 'best' ? 'bg-green-900 text-green-300' :
+                            quality.quality === 'good' ? 'bg-green-900 text-green-300' :
+                            quality.quality === 'ok' ? 'bg-gray-700 text-gray-300' :
+                            quality.quality === 'inaccuracy' ? 'bg-yellow-900 text-yellow-300' :
+                            quality.quality === 'mistake' ? 'bg-orange-900 text-orange-300' :
+                            'bg-red-900 text-red-300'
+                          }`}>
+                            {quality.quality === 'best' ? '最善手' :
+                             quality.quality === 'good' ? '良い手' :
+                             quality.quality === 'ok' ? '普通' :
+                             quality.quality === 'inaccuracy' ? '不正確' :
+                             quality.quality === 'mistake' ? 'ミス' :
+                             'ブランダー'}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-500">
+                          <span className="inline-block px-2 py-1 bg-gray-800 rounded">
+                            前の局面を解析してから、この局面を解析してください
+                          </span>
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* 評価値の変化 */}
+                    {moveEvaluations[currentIndex] && moveEvaluations[currentIndex].previousEvaluation !== null && (
+                      <div className="bg-gray-800 rounded p-2">
+                        <div className="text-xs text-gray-500 mb-1">評価値の変化</div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-mono">
+                            {formatEvaluation(moveEvaluations[currentIndex].previousEvaluation)}
+                          </span>
+                          <span className="text-gray-500">→</span>
+                          <span className="text-sm font-mono font-semibold">
+                            {formatEvaluation(moveEvaluations[currentIndex].evaluation)}
+                          </span>
+                          <span className={`text-sm font-semibold ${
+                            (evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation)) * 
+                            (currentIndex % 2 === 0 ? 1 : -1) >= 0
+                              ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            ({(evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation) >= 0 ? '+' : '')}
+                            {(evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation)).toFixed(2)})
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* 現在の評価 */}
+                    <div className="text-xs text-gray-500">
+                      {evaluation && typeof evaluation === 'number' && (
+                        <span className={`inline-block px-2 py-1 rounded ${
+                          evaluation > 0.5 ? 'bg-green-800 text-green-300' :
+                          evaluation < -0.5 ? 'bg-red-800 text-red-300' :
+                          'bg-gray-800 text-gray-300'
+                        }`}>
+                          {evaluation > 0 ? '白優勢' : evaluation < 0 ? '黒優勢' : '互角'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* 現在の局面の解析結果 */}
+              {currentIndex >= -1 && allMovesAnalysis[currentIndex] && (
+                <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-4 border border-gray-600 mb-3">
+                  <div className="text-sm text-gray-400 font-medium mb-2">現在の局面の評価</div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-bold text-white">
+                      {typeof allMovesAnalysis[currentIndex].evaluation === 'number' ? 
+                        allMovesAnalysis[currentIndex].evaluation.toFixed(2) : 
+                        allMovesAnalysis[currentIndex].evaluation || '0.00'}
+                    </span>
+                    {allMovesAnalysis[currentIndex].bestMove && (
+                      <span className="text-sm text-green-400">
+                        最善手: {moveAnalyzer.current.convertMoveToJapanese(allMovesAnalysis[currentIndex].bestMove)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* 自然言語による手の説明 */}
+              {currentIndex >= 0 && moveExplanations[currentIndex] && (
+                <div className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 rounded-lg p-4 border border-blue-700/30">
+                  <div className="text-sm font-medium text-blue-300 mb-2 flex items-center gap-2">
+                    <span>📝</span>
+                    <span>手の解説</span>
+                  </div>
+                  
+                  {/* 要約 */}
+                  <div className="text-sm text-gray-300 mb-3 font-medium">
+                    {moveExplanations[currentIndex].summary}
+                  </div>
+                  
+                  {/* 詳細 */}
+                  {moveExplanations[currentIndex].details.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {moveExplanations[currentIndex].details.map((detail, idx) => (
+                        <div key={idx} className="text-xs text-gray-300 flex items-start gap-2 leading-relaxed">
+                          <span className="text-blue-400 mt-0.5">•</span>
+                          <span>{detail}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* キーポイント */}
+                  {moveExplanations[currentIndex].keyPoints.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {moveExplanations[currentIndex].keyPoints.map((point, idx) => (
+                        <span 
+                          key={idx}
+                          className={`text-xs px-2 py-1 rounded-full border ${
+                            point === '最善手' ? 'bg-green-800/30 text-green-300 border-green-700/50' :
+                            point === '重大なミス' ? 'bg-red-800/30 text-red-300 border-red-700/50' :
+                            point === 'ミス' ? 'bg-orange-800/30 text-orange-300 border-orange-700/50' :
+                            point === '決定的な手' ? 'bg-purple-800/30 text-purple-300 border-purple-700/50' :
+                            'bg-blue-800/30 text-blue-300 border-blue-700/50'
+                          }`}
+                        >
+                          {point}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+                {/* 解析統計 */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-3 border border-gray-600">
+                    <div className="text-xs text-gray-400 mb-1">全手数</div>
+                    <div className="font-bold text-lg text-blue-400">{history.length}</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-3 border border-gray-600">
+                    <div className="text-xs text-gray-400 mb-1">解析済み</div>
+                    <div className="font-bold text-lg text-green-400">{Object.keys(allMovesAnalysis).length - 1}</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-3 border border-gray-600">
+                    <div className="text-xs text-gray-400 mb-1">平均深さ</div>
+                    <div className="font-bold text-lg text-purple-400">
+                      {Math.round(Object.values(allMovesAnalysis).reduce((sum, a) => sum + (a.depth || 0), 0) / Math.max(1, Object.keys(allMovesAnalysis).length))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 現在の局面情報 */}
+          <div className="bg-gray-800 rounded-xl shadow-2xl p-4 border border-gray-700 mt-4">
+            <h3 className="text-lg font-semibold mb-3 flex items-center">
+              <span className="mr-2">📍</span> 現在の局面
+            </h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">手数:</span>
+                <span className="font-mono">
+                  {currentIndex === -1 ? "初期位置" : `${currentIndex + 1}手目`}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">手番:</span>
+                <span>{chessGame.current?.turn() === "w" ? "白番" : "黒番"}</span>
+              </div>
+              {currentIndex >= 0 && history[currentIndex] && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">最後の手:</span>
+                  <span className="font-mono font-semibold">
+                    {history[currentIndex].san}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 手のリストパネル */}
+          <div className="bg-gray-800 rounded-xl shadow-2xl p-4 border border-gray-700 mt-4">
+            <h3 className="text-lg font-semibold mb-3 flex items-center">
+              <span className="mr-2">📋</span> 棋譜
+            </h3>
+            <div className="max-h-64 overflow-y-auto">
+              {history.length === 0 ? (
+                <p className="text-gray-400 text-center py-4">棋譜が読み込まれていません</p>
+              ) : (
+                <div className="space-y-1">
+                  {/* 初期位置 */}
+                  <button
+                    onClick={() => jumpToMove(-1)}
+                    className={`w-full text-left px-2 py-1 rounded transition ${
+                      currentIndex === -1
+                        ? "bg-blue-600 text-white"
+                        : "hover:bg-gray-700 text-gray-300"
+                    }`}
+                  >
+                    初期位置
+                  </button>
+                  {/* 各手 */}
+                  {history.map((move, index) => (
+                    <button
+                      key={index}
+                      onClick={() => jumpToMove(index)}
+                      className={`w-full text-left px-2 py-1 rounded transition font-mono text-sm ${
+                        currentIndex === index
+                          ? "bg-blue-600 text-white"
+                          : "hover:bg-gray-700 text-gray-300"
+                      }`}
+                    >
+                      <span className="flex items-center justify-between w-full">
+                        <span>
+                          {Math.floor(index / 2) + 1}.
+                          {index % 2 === 0 ? " " : "... "}
+                          {move.san}
+                        </span>
+                        {(() => {
+                          const quality = getMoveQuality(index);
+                          return quality && quality.symbol ? (
+                            <span className={`font-bold ${quality.color}`}>
+                              {quality.symbol}
+                            </span>
+                          ) : null;
+                        })()}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
-
-      <footer className="mt-8 text-center text-gray-500 text-sm">
-        <p>&copy; 解析くん</p>
-      </footer>
     </div>
   );
 }

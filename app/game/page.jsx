@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import ChessBoard from "@/app/components/chessboard";
+import ChessBoard from "@/app/components/ChessBoard";
 import useChess from "@/app/hooks/useChess";
 import useStockfish from "@/app/hooks/useStockfish";
 
