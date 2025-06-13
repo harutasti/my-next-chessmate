@@ -63,8 +63,8 @@ export default function AnalysisPage() {
     analyzePosition,
     stopAnalysis,
   } = useStockfish({
-    difficulty: 20,
-    thinkingTime: 3000,
+    difficulty: 15,  // Reduced from 20 for faster initial analysis
+    thinkingTime: 1000,  // Reduced from 3000ms to 1000ms
   });
 
   // 解析結果が更新されたら、refにも保存
@@ -72,11 +72,17 @@ export default function AnalysisPage() {
     latestAnalysisRef.current = { evaluation, bestMove, depth };
   }, [evaluation, bestMove, depth]);
 
-  // 初期化
+  // 初期化とStockfishのプレウォーミング
   useEffect(() => {
     chessGame.current = new Chess();
     setFen(chessGame.current.fen());
-  }, []);
+    
+    // Stockfishエンジンをプレウォーミング（初回解析を高速化）
+    if (analyzePosition) {
+      analyzePosition(chessGame.current.fen(), 15);
+      setTimeout(() => stopAnalysis(), 100); // すぐに停止
+    }
+  }, [analyzePosition, stopAnalysis]);
 
   // ボードサイズの動的調整
   useEffect(() => {
@@ -128,9 +134,9 @@ export default function AnalysisPage() {
         });
       }
       
-      // 全ての手を自動的に解析
+      // 現在の局面のみを解析（高速化のため）
       if (newHistory.length > 0) {
-        await analyzeAllMoves(newHistory);
+        analyzePosition(chessGame.current.fen(), 15);
       }
     } catch (error) {
       setErrorMessage(error.message || "PGNの読み込みに失敗しました。");
@@ -229,7 +235,7 @@ export default function AnalysisPage() {
       
       // 解析開始
       console.log(`Starting analysis for position: ${fen}`);
-      analyzePosition(fen);
+      analyzePosition(fen, 15);
       
       // 結果の監視開始
       setTimeout(checkResult, 100);
@@ -544,22 +550,58 @@ export default function AnalysisPage() {
                 boardWidth={dynamicBoardWidth}
                 customDarkSquareStyle={{ backgroundColor: "#1e3a5f" }}
                 customLightSquareStyle={{ backgroundColor: "#e8eef5" }}
-                customSquareStyles={{
-                  ...(lastMove && {
-                    [lastMove.from]: { backgroundColor: "rgba(255, 255, 0, 0.4)" },
-                    [lastMove.to]: { backgroundColor: "rgba(255, 255, 0, 0.4)" }
-                  }),
-                  ...((allMovesAnalysis[currentIndex]?.bestMove || bestMove) && {
-                    [(allMovesAnalysis[currentIndex]?.bestMove || bestMove).substring(0, 2)]: { 
-                      backgroundColor: "rgba(0, 255, 0, 0.3)",
-                      border: "2px solid #00ff00"
-                    },
-                    [(allMovesAnalysis[currentIndex]?.bestMove || bestMove).substring(2, 4)]: { 
-                      backgroundColor: "rgba(0, 255, 0, 0.3)",
-                      border: "2px solid #00ff00"
+                customSquareStyles={(() => {
+                  const styles = {};
+                  
+                  // Get the best move from the previous position
+                  const previousBestMove = currentIndex > 0 
+                    ? allMovesAnalysis[currentIndex - 1]?.bestMove 
+                    : allMovesAnalysis[-1]?.bestMove;
+                  
+                  // Check if the played move matches the best move
+                  const wasPlayedMoveBest = lastMove && previousBestMove && 
+                    lastMove.from === previousBestMove.substring(0, 2) && 
+                    lastMove.to === previousBestMove.substring(2, 4);
+                  
+                  // Highlight the played move
+                  if (lastMove) {
+                    if (wasPlayedMoveBest) {
+                      // Light blue for moves that were the best move
+                      styles[lastMove.from] = { backgroundColor: "rgba(100, 200, 255, 0.5)" };
+                      styles[lastMove.to] = { backgroundColor: "rgba(100, 200, 255, 0.5)" };
+                    } else {
+                      // Yellow for regular moves
+                      styles[lastMove.from] = { backgroundColor: "rgba(255, 255, 0, 0.4)" };
+                      styles[lastMove.to] = { backgroundColor: "rgba(255, 255, 0, 0.4)" };
                     }
-                  })
-                }}
+                  }
+                  
+                  // Show what the best move was (if different from played move)
+                  if (previousBestMove && !wasPlayedMoveBest && currentIndex > 0) {
+                    // Purple fill for the best move that should have been played
+                    styles[previousBestMove.substring(0, 2)] = { 
+                      backgroundColor: "rgba(200, 150, 255, 0.4)"
+                    };
+                    styles[previousBestMove.substring(2, 4)] = { 
+                      backgroundColor: "rgba(200, 150, 255, 0.4)"
+                    };
+                  }
+                  
+                  // Highlight the best move suggestion for current position (green)
+                  const currentBestMove = allMovesAnalysis[currentIndex]?.bestMove || bestMove;
+                  if (currentBestMove) {
+                    styles[currentBestMove.substring(0, 2)] = { 
+                      backgroundColor: "rgba(0, 255, 0, 0.3)",
+                      border: "2px solid #00ff00"
+                    };
+                    styles[currentBestMove.substring(2, 4)] = { 
+                      backgroundColor: "rgba(0, 255, 0, 0.3)",
+                      border: "2px solid #00ff00"
+                    };
+                  }
+                  
+                  return styles;
+                })()}
               />
             </div>
             
@@ -610,6 +652,40 @@ export default function AnalysisPage() {
                 <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
               </button>
             </div>
+            
+            {/* 色の凡例 */}
+            <div className="mt-3 flex flex-wrap gap-3 justify-center text-xs">
+              <div className="flex items-center gap-1">
+                <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(100, 200, 255, 0.5)" }}></div>
+                <span className="text-gray-300">最善手でした</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(255, 255, 0, 0.4)" }}></div>
+                <span className="text-gray-300">指した手</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(200, 150, 255, 0.4)" }}></div>
+                <span className="text-gray-300">最善手だった</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(0, 255, 0, 0.3)", border: "2px solid #00ff00" }}></div>
+                <span className="text-gray-300">現在の推奨手</span>
+              </div>
+            </div>
+            
+            {/* 全手解析ボタン */}
+            {history.length > 0 && !isAnalyzingAll && (!allMovesAnalysis || Object.keys(allMovesAnalysis).length === 0) && (
+              <button
+                onClick={() => analyzeAllMoves(history)}
+                className="mt-3 w-full group relative bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+              >
+                <span className="flex items-center justify-center gap-2">
+                  <span>📊</span>
+                  <span>全ての手を詳細解析</span>
+                </span>
+                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/0 to-white/0 group-hover:from-white/10 group-hover:to-white/10 transition-all duration-300"></div>
+              </button>
+            )}
           </div>
         </div>
 
@@ -639,9 +715,23 @@ export default function AnalysisPage() {
                   />
                   <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold">
                     <span className={allMovesAnalysis[currentIndex].evaluation && getEvalBarWidthForValue(allMovesAnalysis[currentIndex].evaluation) > 50 ? "text-gray-800" : "text-gray-200"}>
-                      {typeof allMovesAnalysis[currentIndex].evaluation === 'number' ? 
-                        allMovesAnalysis[currentIndex].evaluation.toFixed(2) : 
-                        allMovesAnalysis[currentIndex].evaluation || '0.00'}
+                      {(() => {
+                        const eval_ = allMovesAnalysis[currentIndex].evaluation;
+                        // Display evaluation from current player's perspective
+                        // After White's move (currentIndex even), it's Black's turn, so negate
+                        // After Black's move (currentIndex odd), it's White's turn, so keep as is
+                        const isBlackTurn = currentIndex % 2 === 0;
+                        
+                        if (typeof eval_ === 'number') {
+                          const displayEval = isBlackTurn ? -eval_ : eval_;
+                          return displayEval.toFixed(2);
+                        } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
+                          // For mate evaluations, also adjust perspective
+                          const mateIn = parseInt(eval_.substring(1));
+                          return isBlackTurn ? `M${-mateIn}` : eval_;
+                        }
+                        return eval_ || '0.00';
+                      })()}
                     </span>
                   </div>
                 </div>
@@ -700,6 +790,23 @@ export default function AnalysisPage() {
                       );
                     })()}
                     
+                    {/* 最善手との比較 */}
+                    {currentIndex > 0 && allMovesAnalysis[currentIndex - 1]?.bestMove && (
+                      <div className="bg-gray-800 rounded p-2 mb-2">
+                        <div className="text-xs text-gray-500 mb-1">前の局面での最善手</div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-mono text-green-400">
+                            {moveAnalyzer.current.convertMoveToJapanese(allMovesAnalysis[currentIndex - 1].bestMove)}
+                          </span>
+                          {moveEvaluations[currentIndex]?.wasBestMove && (
+                            <span className="text-xs px-2 py-1 bg-green-900 text-green-300 rounded">
+                              最善手を指しました
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
                     {/* 評価値の変化 */}
                     {moveEvaluations[currentIndex] && moveEvaluations[currentIndex].previousEvaluation !== null && (
                       <div className="bg-gray-800 rounded p-2">
@@ -732,7 +839,12 @@ export default function AnalysisPage() {
                           evaluation < -0.5 ? 'bg-red-800 text-red-300' :
                           'bg-gray-800 text-gray-300'
                         }`}>
-                          {evaluation > 0 ? '白優勢' : evaluation < 0 ? '黒優勢' : '互角'}
+                          {(() => {
+                            // Display from current player's perspective
+                            const isBlackTurn = chessGame.current?.turn() === 'b';
+                            const adjustedEval = isBlackTurn ? -evaluation : evaluation;
+                            return adjustedEval > 0 ? '手番優勢' : adjustedEval < 0 ? '相手優勢' : '互角';
+                          })()}
                         </span>
                       )}
                     </div>
@@ -746,9 +858,20 @@ export default function AnalysisPage() {
                   <div className="text-sm text-gray-400 font-medium mb-2">現在の局面の評価</div>
                   <div className="flex items-center justify-between">
                     <span className="text-lg font-bold text-white">
-                      {typeof allMovesAnalysis[currentIndex].evaluation === 'number' ? 
-                        allMovesAnalysis[currentIndex].evaluation.toFixed(2) : 
-                        allMovesAnalysis[currentIndex].evaluation || '0.00'}
+                      {(() => {
+                        const eval_ = allMovesAnalysis[currentIndex].evaluation;
+                        // Display evaluation from current player's perspective
+                        const isBlackTurn = currentIndex % 2 === 0;
+                        
+                        if (typeof eval_ === 'number') {
+                          const displayEval = isBlackTurn ? -eval_ : eval_;
+                          return displayEval.toFixed(2);
+                        } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
+                          const mateIn = parseInt(eval_.substring(1));
+                          return isBlackTurn ? `M${-mateIn}` : eval_;
+                        }
+                        return eval_ || '0.00';
+                      })()}
                     </span>
                     {allMovesAnalysis[currentIndex].bestMove && (
                       <span className="text-sm text-green-400">
