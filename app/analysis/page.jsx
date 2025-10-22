@@ -7,6 +7,33 @@ import { Chessboard } from "react-chessboard";
 import { useRouter } from "next/navigation";
 import useStockfish from "@/app/hooks/useStockfish";
 import ChessMoveAnalyzer from "@/app/utils/chessMoveAnalyzer";
+import EvaluationGraph from "@/app/components/EvaluationGraph";
+import { StockfishWorkerPool } from "@/app/utils/stockfishWorkerPool";
+
+function getSideToMoveFromFen(fen) {
+  if (!fen) return 'w';
+  const parts = fen.split(' ');
+  return parts.length > 1 ? parts[1] : 'w';
+}
+
+function normalizeEvaluationForWhitePerspective(evaluation, fen) {
+  if (evaluation === null || evaluation === undefined) return evaluation;
+  const sideToMove = getSideToMoveFromFen(fen);
+  if (typeof evaluation === 'number') {
+    return sideToMove === 'b' ? -evaluation : evaluation;
+  }
+  if (typeof evaluation === 'string' && evaluation.startsWith('M')) {
+    const mateValue = parseInt(evaluation.substring(1), 10);
+    if (Number.isNaN(mateValue)) return evaluation;
+    if (mateValue === 0) {
+      const winnerSign = sideToMove === 'b' ? '+' : '-';
+      return `M${winnerSign}0`;
+    }
+    const normalizedMate = sideToMove === 'b' ? -mateValue : mateValue;
+    return `M${normalizedMate}`;
+  }
+  return evaluation;
+}
 
 // 事前定義PGN
 const prefilledPgn = `[Event "Live Chess"]
@@ -45,6 +72,7 @@ export default function AnalysisPage() {
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const moveAnalyzer = useRef(new ChessMoveAnalyzer());
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   
   const router = useRouter();
   const chessGame = useRef(null);
@@ -83,6 +111,16 @@ export default function AnalysisPage() {
       setTimeout(() => stopAnalysis(), 100); // すぐに停止
     }
   }, [analyzePosition, stopAnalysis]);
+
+  // 背景のマウスポインタ追従エフェクト
+  useEffect(() => {
+    const handleMouseMove = (event) => {
+      setMousePosition({ x: event.clientX, y: event.clientY });
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => window.removeEventListener("mousemove", handleMouseMove);
+  }, []);
 
   // ボードサイズの動的調整
   useEffect(() => {
@@ -205,58 +243,6 @@ export default function AnalysisPage() {
     }
   };
 
-  // 解析を実行して結果を返すヘルパー関数
-  const analyzePositionWithResult = (fen) => {
-    return new Promise((resolve) => {
-      let completed = false;
-      
-      // 解析前の値をリセット
-      latestAnalysisRef.current = { evaluation: null, bestMove: null, depth: null };
-      
-      // 解析結果を監視する関数
-      const checkResult = () => {
-        if (!completed) {
-          const current = latestAnalysisRef.current;
-          // タイムアウト前に結果が得られたかチェック
-          if (current.evaluation !== null && current.bestMove !== null && current.depth > 0) {
-            completed = true;
-            console.log(`Analysis complete: eval=${current.evaluation}, bestMove=${current.bestMove}, depth=${current.depth}`);
-            resolve({
-              evaluation: current.evaluation,
-              bestMove: current.bestMove,
-              depth: current.depth
-            });
-          } else {
-            // まだ結果が揃っていない場合は100ms後に再チェック
-            setTimeout(checkResult, 100);
-          }
-        }
-      };
-      
-      // 解析開始
-      console.log(`Starting analysis for position: ${fen}`);
-      analyzePosition(fen, 15);
-      
-      // 結果の監視開始
-      setTimeout(checkResult, 100);
-      
-      // タイムアウト設定（最大5秒）
-      setTimeout(() => {
-        if (!completed) {
-          completed = true;
-          const current = latestAnalysisRef.current;
-          console.warn(`Analysis timeout! Using partial results: eval=${current.evaluation}, bestMove=${current.bestMove}, depth=${current.depth}`);
-          // タイムアウト時は現在の値を返す（nullの場合もある）
-          resolve({
-            evaluation: current.evaluation || 0,
-            bestMove: current.bestMove || null,
-            depth: current.depth || 0
-          });
-        }
-      }, 5000);
-    });
-  };
-
   // 全ての手を解析
   const analyzeAllMoves = async (moves) => {
     if (!engineReady) {
@@ -266,51 +252,94 @@ export default function AnalysisPage() {
     
     setIsAnalyzingAll(true);
     setAnalysisProgress(0);
-    const analysisData = {};
     const tempChess = new Chess();
+    let pool = null;
     
     try {
-      // 初期位置を解析
+      pool = new StockfishWorkerPool({
+        size: 4,
+        thinkingTime: 1000,
+        depth: 15,
+        skillLevel: 20,
+        timeoutMs: 6000,
+      });
+
+      const fenJobs = [];
       tempChess.reset();
-      const initialAnalysis = await analyzePositionWithResult(tempChess.fen());
-      
-      analysisData[-1] = {
-        fen: tempChess.fen(),
-        evaluation: initialAnalysis.evaluation || 0,
-        bestMove: initialAnalysis.bestMove || null,
-        depth: initialAnalysis.depth || 15
-      };
-      
-      // 各手を順番に解析
+      const initialFen = tempChess.fen();
+      fenJobs.push({ index: -1, fen: initialFen });
+
       for (let i = 0; i < moves.length; i++) {
         tempChess.move(moves[i]);
-        const currentFen = tempChess.fen();
-        
-        // 解析開始と結果の取得
-        const analysis = await analyzePositionWithResult(currentFen);
-        
-        // 解析結果を保存
-        analysisData[i] = {
-          fen: currentFen,
-          evaluation: analysis.evaluation || 0,
-          bestMove: analysis.bestMove || null,
-          depth: analysis.depth || 15,
-          previousEval: i > 0 ? analysisData[i-1].evaluation : analysisData[-1].evaluation
-        };
-        
-        // 進捗更新
-        setAnalysisProgress(Math.round(((i + 1) / moves.length) * 100));
+        fenJobs.push({ index: i, fen: tempChess.fen() });
       }
-      
-      setAllMovesAnalysis(analysisData);
-      
-      // 全ての手の説明を生成
-      generateAllExplanations(moves, analysisData);
-      
+
+      await pool.init();
+
+      const totalJobs = fenJobs.length;
+      const results = await pool.analyzeBatch(fenJobs, {
+        onProgress: (completed) => {
+          setAnalysisProgress(Math.round((completed / totalJobs) * 100));
+        },
+      });
+
+      const newAnalysisData = {};
+
+      results.forEach((res) => {
+        if (!res) return;
+        const { job, evaluation, bestMove, depth } = res;
+        const normalizedEval =
+          normalizeEvaluationForWhitePerspective(evaluation ?? 0, job.fen) ?? 0;
+        newAnalysisData[job.index] = {
+          fen: job.fen,
+          evaluation: normalizedEval,
+          bestMove: bestMove || null,
+          depth: depth || 15,
+        };
+      });
+
+      if (!newAnalysisData[-1]) {
+        const initialResult = results.find((res) => res?.job.index === -1);
+        const fallbackEval =
+          normalizeEvaluationForWhitePerspective(initialResult?.evaluation ?? 0, initialFen) ?? 0;
+        newAnalysisData[-1] = {
+          fen: initialFen,
+          evaluation: fallbackEval,
+          bestMove: initialResult?.bestMove || null,
+          depth: initialResult?.depth || 15,
+        };
+      }
+
+      for (let i = 0; i < moves.length; i++) {
+        if (!newAnalysisData[i]) {
+          const fenEntry = fenJobs.find((job) => job.index === i);
+          const prevEval = i > 0 ? newAnalysisData[i - 1]?.evaluation : newAnalysisData[-1]?.evaluation;
+          newAnalysisData[i] = {
+            fen: fenEntry?.fen || "",
+            evaluation: prevEval ?? 0,
+            bestMove: null,
+            depth: 0,
+            previousEval: prevEval ?? 0,
+          };
+        } else {
+          const prevEval = i > 0 ? newAnalysisData[i - 1]?.evaluation : newAnalysisData[-1]?.evaluation;
+          newAnalysisData[i].previousEval = prevEval ?? 0;
+        }
+      }
+
+      setAllMovesAnalysis(newAnalysisData);
+      generateAllExplanations(moves, newAnalysisData);
+      setAnalysisProgress(100);
+
+
     } catch (error) {
       console.error("Analysis error:", error);
       setErrorMessage("解析中にエラーが発生しました。");
     } finally {
+      if (pool) {
+        pool.terminate();
+        pool = null;
+      }
       setIsAnalyzingAll(false);
       setAnalysisProgress(0);
       stopAnalysis(); // 解析を停止
@@ -389,7 +418,13 @@ export default function AnalysisPage() {
     if (typeof evalValue === 'string') {
       // メイト表記の処理
       if (evalValue.startsWith('M')) {
-        const mateIn = parseInt(evalValue.substring(1), 10);
+        const mateBody = evalValue.substring(1);
+        const mateIn = parseInt(mateBody, 10);
+        if (mateIn === 0) {
+          if (mateBody.startsWith('+')) return 100;
+          if (mateBody.startsWith('-')) return -100;
+          return 0;
+        }
         // メイトの場合は大きな値として扱う (符号付き)
         return mateIn > 0 ? 100 - Math.abs(mateIn) : -100 + Math.abs(mateIn);
       }
@@ -401,11 +436,11 @@ export default function AnalysisPage() {
   const getMoveQualityFromEval = (evalChange, isWhiteMove) => {
     const adjustedDiff = isWhiteMove ? evalChange : -evalChange;
     
-    if (adjustedDiff >= 0) return { quality: 'good', symbol: '!', color: 'text-green-400' };
-    if (adjustedDiff >= -0.5) return { quality: 'ok', symbol: '', color: 'text-gray-400' };
-    if (adjustedDiff >= -1.0) return { quality: 'inaccuracy', symbol: '?!', color: 'text-yellow-400' };
-    if (adjustedDiff >= -2.0) return { quality: 'mistake', symbol: '?', color: 'text-orange-400' };
-    return { quality: 'blunder', symbol: '??', color: 'text-red-400' };
+    if (adjustedDiff >= -0.2) return { quality: 'good', symbol: '', color: 'text-slate-500' };
+    if (adjustedDiff >= -0.5) return { quality: 'ok', symbol: '', color: 'text-slate-500' };
+    if (adjustedDiff >= -1.0) return { quality: 'inaccuracy', symbol: '?!', color: 'text-amber-500' };
+    if (adjustedDiff >= -3.0) return { quality: 'mistake', symbol: '?', color: 'text-orange-500' };
+    return { quality: 'blunder', symbol: '??', color: 'text-red-500' };
   };
   
   // 現在表示している局面の解析データを取得して、説明を更新
@@ -430,19 +465,28 @@ export default function AnalysisPage() {
     const previousEvalNum = evaluationToNumber(moveEval.previousEvaluation);
     const evalDiff = currentEvalNum - previousEvalNum;
     const isWhiteMove = moveIndex % 2 === 0;
+    
+    // 評価値は常に白視点で保存されている（正の値=白有利、負の値=黒有利）
+    // 白の手番の場合: evalDiff > 0 なら白に有利になった（良い手）
+    // 黒の手番の場合: evalDiff < 0 なら黒に有利になった（良い手）
     const adjustedDiff = isWhiteMove ? evalDiff : -evalDiff;
     
-    if (adjustedDiff >= -0.3) return { quality: 'good', symbol: '', color: 'text-gray-400' };
-    if (adjustedDiff >= -0.5) return { quality: 'ok', symbol: '', color: 'text-gray-400' };
-    if (adjustedDiff >= -1.0) return { quality: 'inaccuracy', symbol: '?!', color: 'text-yellow-400' };
-    if (adjustedDiff >= -2.0) return { quality: 'mistake', symbol: '?', color: 'text-orange-400' };
-    return { quality: 'blunder', symbol: '??', color: 'text-red-400' };
+    // 閾値を調整（より適切な判定のため）
+    if (adjustedDiff >= -0.2) return { quality: 'good', symbol: '', color: 'text-slate-500' };
+    if (adjustedDiff >= -0.5) return { quality: 'ok', symbol: '', color: 'text-slate-500' };
+    if (adjustedDiff >= -1.0) return { quality: 'inaccuracy', symbol: '?!', color: 'text-amber-500' };
+    if (adjustedDiff >= -3.0) return { quality: 'mistake', symbol: '?', color: 'text-orange-500' };
+    return { quality: 'blunder', symbol: '??', color: 'text-red-500' };
   };
 
   // 評価値の表示形式を整える
   const formatEvaluation = (eval_) => {
     if (eval_ === null || eval_ === undefined) return "0.00";
-    if (typeof eval_ === "string") return eval_;
+    if (typeof eval_ === "string") {
+      if (eval_ === "M+0" || eval_ === "M-0") return "M0";
+      if (eval_.startsWith('M+')) return `M${eval_.substring(2)}`;
+      return eval_;
+    }
     if (typeof eval_ === "number") return eval_.toFixed(2);
     return "0.00";
   };
@@ -469,13 +513,28 @@ export default function AnalysisPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white flex flex-col items-center p-4">
-      {/* ヘッダー */}
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-white via-slate-100 to-slate-200 text-slate-900">
+      <div className="absolute inset-0 opacity-20">
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(15,23,42,0.06) 35px, rgba(15,23,42,0.06) 70px)`,
+          }}
+        />
+      </div>
+      <div
+        className="absolute inset-0 opacity-50 blur-3xl"
+        style={{
+          background: `radial-gradient(circle at ${mousePosition.x}px ${mousePosition.y}px, rgba(59, 130, 246, 0.25), transparent 55%)`,
+        }}
+      />
+      <div className="relative z-10 flex min-h-screen flex-col items-center p-4">
+        {/* ヘッダー */}
       <header className="mb-6 text-center">
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
+        <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900 drop-shadow-sm">
           棋譜解析
         </h1>
-        <p className="text-gray-400 mt-2">PGN形式の棋譜を読み込んで解析します</p>
+        <p className="text-slate-600 mt-2">PGN形式の棋譜を読み込んで解析します</p>
         <button
           onClick={() => router.push("/")}
           className="mt-3 group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
@@ -484,10 +543,10 @@ export default function AnalysisPage() {
         </button>
       </header>
 
-      {/* PGN入力エリア */}
-      <div className="w-full max-w-7xl mb-6">
-        <div className="bg-gray-800 rounded-xl shadow-2xl p-6 border border-gray-700">
-          <h3 className="text-xl font-semibold mb-3 flex items-center">
+        {/* PGN入力エリア */}
+        <div className="w-full max-w-7xl mb-6">
+        <div className="bg-white/90 rounded-xl shadow-lg p-6 border border-slate-200">
+          <h3 className="text-xl font-semibold mb-3 flex items-center text-slate-800">
             <span className="mr-2">📝</span> PGN入力
           </h3>
           <textarea
@@ -495,7 +554,7 @@ export default function AnalysisPage() {
             onChange={(e) => setPgn(e.target.value)}
             placeholder="ここにPGN形式の棋譜を貼り付けてください..."
             rows="8"
-            className="w-full p-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-sm"
+            className="w-full p-3 bg-slate-100 text-slate-900 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-sm"
             disabled={isLoadingPgn}
           />
           <div className="mt-3 flex items-center justify-between">
@@ -512,21 +571,21 @@ export default function AnalysisPage() {
               <div className="absolute inset-0 rounded-lg bg-white/0 group-hover:bg-white/10 transition-all duration-300"></div>
             </button>
             {errorMessage && (
-              <p className="text-red-400 text-sm">{errorMessage}</p>
+              <p className="text-red-500 text-sm">{errorMessage}</p>
             )}
             {engineReady && !isAnalyzingAll && (
-              <span className="text-green-400 text-sm flex items-center">
-                <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></span>
+              <span className="text-emerald-600 text-sm flex items-center">
+                <span className="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></span>
                 エンジン準備完了
               </span>
             )}
             {isAnalyzingAll && (
-              <div className="text-blue-400 text-sm">
+              <div className="text-blue-600 text-sm">
                 <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
                   <span>全手解析中... {analysisProgress}%</span>
                 </div>
-                <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                <div className="w-full bg-slate-200 rounded-full h-2 mt-2">
                   <div 
                     className="bg-blue-500 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${analysisProgress}%` }}
@@ -542,7 +601,7 @@ export default function AnalysisPage() {
       <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* 左側・中央：チェス盤（より大きく） */}
         <div className="lg:col-span-2">
-          <div className="bg-gray-800 rounded-xl shadow-2xl p-2 border border-gray-700">
+          <div className="bg-white/90 rounded-xl shadow-lg p-2 border border-slate-200">
             <div ref={boardWrapperRef} className="w-full aspect-square">
               <Chessboard
                 position={fen}
@@ -580,10 +639,10 @@ export default function AnalysisPage() {
                   if (previousBestMove && !wasPlayedMoveBest && currentIndex > 0) {
                     // Purple fill for the best move that should have been played
                     styles[previousBestMove.substring(0, 2)] = { 
-                      backgroundColor: "rgba(200, 150, 255, 0.4)"
+                      backgroundColor: "rgba(139, 92, 246, 0.45)"
                     };
                     styles[previousBestMove.substring(2, 4)] = { 
-                      backgroundColor: "rgba(200, 150, 255, 0.4)"
+                      backgroundColor: "rgba(139, 92, 246, 0.45)"
                     };
                   }
                   
@@ -609,47 +668,47 @@ export default function AnalysisPage() {
             <div className="grid grid-cols-4 gap-2 mt-2">
               <button
                 onClick={() => navigateMoves("first")}
-                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || (currentIndex === -1 && history.length === 0)}
               >
                 <span className="flex items-center justify-center gap-1">
                   <span className="text-lg">⏮️</span>
                   <span className="text-xs hidden sm:inline">最初</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
               <button
                 onClick={() => navigateMoves("prev")}
-                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || currentIndex < 0}
               >
                 <span className="flex items-center justify-center gap-1">
                   <span className="text-lg">◀️</span>
                   <span className="text-xs hidden sm:inline">戻る</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
               <button
                 onClick={() => navigateMoves("next")}
-                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || currentIndex >= history.length - 1}
               >
                 <span className="flex items-center justify-center gap-1">
                   <span className="text-xs hidden sm:inline">進む</span>
                   <span className="text-lg">▶️</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
               <button
                 onClick={() => navigateMoves("last")}
-                className="group relative bg-gradient-to-br from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:scale-105 active:scale-95"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || history.length === 0 || currentIndex === history.length - 1}
               >
                 <span className="flex items-center justify-center gap-1">
                   <span className="text-xs hidden sm:inline">最後</span>
                   <span className="text-lg">⏭️</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300"></div>
+                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
             </div>
             
@@ -657,19 +716,19 @@ export default function AnalysisPage() {
             <div className="mt-3 flex flex-wrap gap-3 justify-center text-xs">
               <div className="flex items-center gap-1">
                 <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(100, 200, 255, 0.5)" }}></div>
-                <span className="text-gray-300">最善手でした</span>
+                <span className="text-slate-600">最善手でした</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(255, 255, 0, 0.4)" }}></div>
-                <span className="text-gray-300">指した手</span>
+                <span className="text-slate-600">指した手</span>
               </div>
               <div className="flex items-center gap-1">
-                <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(200, 150, 255, 0.4)" }}></div>
-                <span className="text-gray-300">最善手だった</span>
+                <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(124, 58, 237, 0.7)" }}></div>
+                <span className="text-slate-600">最善手だった</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-4 h-4 rounded" style={{ backgroundColor: "rgba(0, 255, 0, 0.3)", border: "2px solid #00ff00" }}></div>
-                <span className="text-gray-300">現在の推奨手</span>
+                <span className="text-slate-600">現在の推奨手</span>
               </div>
             </div>
             
@@ -691,30 +750,80 @@ export default function AnalysisPage() {
 
         {/* 右側：解析パネル */}
         <div className="lg:col-span-1">
-          <div className="bg-gray-800 rounded-xl shadow-2xl p-4 border border-gray-700">
-            <h3 className="text-lg font-semibold mb-3 flex items-center justify-between">
+          <div className="bg-white/90 rounded-xl shadow-lg p-4 border border-slate-200">
+            <h3 className="text-lg font-semibold mb-3 flex items-center justify-between text-slate-800">
               <span className="flex items-center">
                 <span className="mr-2">🔍</span> エンジン解析
               </span>
               {/* 解析状態の表示 */}
               {allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0 && (
-                <div className="text-xs text-green-400 flex items-center gap-2">
-                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                <div className="text-xs text-emerald-600 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
                   <span>全ての手を解析済み</span>
                 </div>
               )}
             </h3>
 
+            <EvaluationGraph
+              analysisData={allMovesAnalysis}
+              history={history}
+              currentIndex={currentIndex}
+              onSelectMove={jumpToMove}
+              evaluationToNumber={evaluationToNumber}
+              formatEvaluation={formatEvaluation}
+            />
+
             {/* 現在の局面の評価バー */}
             {currentIndex >= -1 && allMovesAnalysis[currentIndex] && (
               <div className="mb-4">
-                <div className="h-8 bg-gray-700 rounded-lg overflow-hidden relative">
+                <div className="h-8 bg-slate-200 rounded-lg overflow-hidden relative">
                   <div
                     className="h-full bg-gradient-to-r from-gray-100 to-white transition-all duration-500"
-                    style={{ width: `${getEvalBarWidthForValue(allMovesAnalysis[currentIndex].evaluation)}%` }}
+                    style={{ width: `${(() => {
+                      const eval_ = allMovesAnalysis[currentIndex].evaluation;
+                      // Adjust evaluation for bar display based on turn
+                      const isBlackTurn = currentIndex % 2 === 0;
+                      let adjustedEval = eval_;
+                      
+                      if (typeof eval_ === 'number') {
+                        adjustedEval = isBlackTurn ? -eval_ : eval_;
+                      } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
+                        const mateIn = parseInt(eval_.substring(1), 10);
+                        if (Number.isNaN(mateIn)) {
+                          adjustedEval = 0;
+                        } else if (mateIn === 0) {
+                          adjustedEval = isBlackTurn ? 100 : -100;
+                        } else {
+                          const perspectiveMate = isBlackTurn ? -mateIn : mateIn;
+                          adjustedEval = perspectiveMate > 0 ? 100 : -100;
+                        }
+                      }
+                      
+                      return getEvalBarWidthForValue(adjustedEval);
+                    })()}%` }}
                   />
                   <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold">
-                    <span className={allMovesAnalysis[currentIndex].evaluation && getEvalBarWidthForValue(allMovesAnalysis[currentIndex].evaluation) > 50 ? "text-gray-800" : "text-gray-200"}>
+                    <span className={(() => {
+                      const eval_ = allMovesAnalysis[currentIndex].evaluation;
+                      const isBlackTurn = currentIndex % 2 === 0;
+                      let adjustedEval = eval_;
+                      
+                      if (typeof eval_ === 'number') {
+                        adjustedEval = isBlackTurn ? -eval_ : eval_;
+                      } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
+                        const mateIn = parseInt(eval_.substring(1), 10);
+                        if (Number.isNaN(mateIn)) {
+                          adjustedEval = 0;
+                        } else if (mateIn === 0) {
+                          adjustedEval = isBlackTurn ? 100 : -100;
+                        } else {
+                          const perspectiveMate = isBlackTurn ? -mateIn : mateIn;
+                          adjustedEval = perspectiveMate > 0 ? 100 : -100;
+                        }
+                      }
+                      
+                      return getEvalBarWidthForValue(adjustedEval) > 50 ? "text-slate-800" : "text-white";
+                    })()}>
                       {(() => {
                         const eval_ = allMovesAnalysis[currentIndex].evaluation;
                         // Display evaluation from current player's perspective
@@ -735,7 +844,7 @@ export default function AnalysisPage() {
                     </span>
                   </div>
                 </div>
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
                   <span>黒優勢</span>
                   <span>白優勢</span>
                 </div>
@@ -748,13 +857,12 @@ export default function AnalysisPage() {
 
               {/* 手の評価 */}
               {currentIndex >= 0 && (
-                <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-4 border border-gray-600">
-                  <div className="text-sm text-gray-400 font-medium mb-3">現在の手の評価</div>
+                <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-4 border border-slate-200">
+                  <div className="text-sm text-slate-600 font-medium mb-3">現在の手の評価</div>
                   <div className="space-y-3">
                     {/* 手の品質 */}
                     {(() => {
                       const quality = getMoveQuality(currentIndex);
-                      const moveEval = moveEvaluations[currentIndex];
                       return quality ? (
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-semibold flex items-center gap-2">
@@ -766,12 +874,12 @@ export default function AnalysisPage() {
                             )}
                           </span>
                           <span className={`text-xs px-2 py-1 rounded ${
-                            quality.quality === 'best' ? 'bg-green-900 text-green-300' :
-                            quality.quality === 'good' ? 'bg-green-900 text-green-300' :
-                            quality.quality === 'ok' ? 'bg-gray-700 text-gray-300' :
-                            quality.quality === 'inaccuracy' ? 'bg-yellow-900 text-yellow-300' :
-                            quality.quality === 'mistake' ? 'bg-orange-900 text-orange-300' :
-                            'bg-red-900 text-red-300'
+                            quality.quality === 'best' ? 'bg-emerald-100 text-emerald-700' :
+                            quality.quality === 'good' ? 'bg-emerald-50 text-emerald-700' :
+                            quality.quality === 'ok' ? 'bg-slate-200 text-slate-600' :
+                            quality.quality === 'inaccuracy' ? 'bg-amber-100 text-amber-700' :
+                            quality.quality === 'mistake' ? 'bg-orange-100 text-orange-700' :
+                            'bg-red-100 text-red-700'
                           }`}>
                             {quality.quality === 'best' ? '最善手' :
                              quality.quality === 'good' ? '良い手' :
@@ -782,8 +890,8 @@ export default function AnalysisPage() {
                           </span>
                         </div>
                       ) : (
-                        <div className="text-xs text-gray-500">
-                          <span className="inline-block px-2 py-1 bg-gray-800 rounded">
+                        <div className="text-xs text-slate-500">
+                          <span className="inline-block px-2 py-1 bg-slate-100 rounded">
                             前の局面を解析してから、この局面を解析してください
                           </span>
                         </div>
@@ -792,14 +900,14 @@ export default function AnalysisPage() {
                     
                     {/* 最善手との比較 */}
                     {currentIndex > 0 && allMovesAnalysis[currentIndex - 1]?.bestMove && (
-                      <div className="bg-gray-800 rounded p-2 mb-2">
-                        <div className="text-xs text-gray-500 mb-1">前の局面での最善手</div>
+                      <div className="bg-slate-100 rounded-lg p-2 mb-2">
+                        <div className="text-xs text-slate-500 mb-1">前の局面での最善手</div>
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-mono text-green-400">
+                          <span className="text-sm font-mono text-emerald-600">
                             {moveAnalyzer.current.convertMoveToJapanese(allMovesAnalysis[currentIndex - 1].bestMove)}
                           </span>
                           {moveEvaluations[currentIndex]?.wasBestMove && (
-                            <span className="text-xs px-2 py-1 bg-green-900 text-green-300 rounded">
+                            <span className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded">
                               最善手を指しました
                             </span>
                           )}
@@ -809,20 +917,20 @@ export default function AnalysisPage() {
                     
                     {/* 評価値の変化 */}
                     {moveEvaluations[currentIndex] && moveEvaluations[currentIndex].previousEvaluation !== null && (
-                      <div className="bg-gray-800 rounded p-2">
-                        <div className="text-xs text-gray-500 mb-1">評価値の変化</div>
+                      <div className="bg-slate-100 rounded-lg p-2">
+                        <div className="text-xs text-slate-500 mb-1">評価値の変化</div>
                         <div className="flex items-center gap-3">
-                          <span className="text-sm font-mono">
+                          <span className="text-sm font-mono text-slate-700">
                             {formatEvaluation(moveEvaluations[currentIndex].previousEvaluation)}
                           </span>
-                          <span className="text-gray-500">→</span>
-                          <span className="text-sm font-mono font-semibold">
+                          <span className="text-slate-500">→</span>
+                          <span className="text-sm font-mono font-semibold text-slate-900">
                             {formatEvaluation(moveEvaluations[currentIndex].evaluation)}
                           </span>
                           <span className={`text-sm font-semibold ${
                             (evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation)) * 
                             (currentIndex % 2 === 0 ? 1 : -1) >= 0
-                              ? 'text-green-400' : 'text-red-400'
+                              ? 'text-emerald-600' : 'text-red-500'
                           }`}>
                             ({(evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation) >= 0 ? '+' : '')}
                             {(evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation)).toFixed(2)})
@@ -832,12 +940,12 @@ export default function AnalysisPage() {
                     )}
                     
                     {/* 現在の評価 */}
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs text-slate-500">
                       {evaluation && typeof evaluation === 'number' && (
                         <span className={`inline-block px-2 py-1 rounded ${
-                          evaluation > 0.5 ? 'bg-green-800 text-green-300' :
-                          evaluation < -0.5 ? 'bg-red-800 text-red-300' :
-                          'bg-gray-800 text-gray-300'
+                          evaluation > 0.5 ? 'bg-emerald-100 text-emerald-700' :
+                          evaluation < -0.5 ? 'bg-red-100 text-red-700' :
+                          'bg-slate-200 text-slate-700'
                         }`}>
                           {(() => {
                             // Display from current player's perspective
@@ -854,10 +962,10 @@ export default function AnalysisPage() {
               
               {/* 現在の局面の解析結果 */}
               {currentIndex >= -1 && allMovesAnalysis[currentIndex] && (
-                <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-4 border border-gray-600 mb-3">
-                  <div className="text-sm text-gray-400 font-medium mb-2">現在の局面の評価</div>
+                <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-4 border border-slate-200 mb-3">
+                  <div className="text-sm text-slate-600 font-medium mb-2">現在の局面の評価</div>
                   <div className="flex items-center justify-between">
-                    <span className="text-lg font-bold text-white">
+                    <span className="text-lg font-bold text-slate-900">
                       {(() => {
                         const eval_ = allMovesAnalysis[currentIndex].evaluation;
                         // Display evaluation from current player's perspective
@@ -874,24 +982,24 @@ export default function AnalysisPage() {
                       })()}
                     </span>
                     {allMovesAnalysis[currentIndex].bestMove && (
-                      <span className="text-sm text-green-400">
+                      <span className="text-sm text-emerald-600">
                         最善手: {moveAnalyzer.current.convertMoveToJapanese(allMovesAnalysis[currentIndex].bestMove)}
                       </span>
                     )}
                   </div>
                 </div>
               )}
-              
+
               {/* 自然言語による手の説明 */}
               {currentIndex >= 0 && moveExplanations[currentIndex] && (
-                <div className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 rounded-lg p-4 border border-blue-700/30">
-                  <div className="text-sm font-medium text-blue-300 mb-2 flex items-center gap-2">
+                  <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg p-4 border border-blue-200/60">
+                  <div className="text-sm font-medium text-blue-700 mb-2 flex items-center gap-2">
                     <span>📝</span>
                     <span>手の解説</span>
                   </div>
                   
                   {/* 要約 */}
-                  <div className="text-sm text-gray-300 mb-3 font-medium">
+                  <div className="text-sm text-slate-700 mb-3 font-medium">
                     {moveExplanations[currentIndex].summary}
                   </div>
                   
@@ -899,8 +1007,8 @@ export default function AnalysisPage() {
                   {moveExplanations[currentIndex].details.length > 0 && (
                     <div className="space-y-2 mb-3">
                       {moveExplanations[currentIndex].details.map((detail, idx) => (
-                        <div key={idx} className="text-xs text-gray-300 flex items-start gap-2 leading-relaxed">
-                          <span className="text-blue-400 mt-0.5">•</span>
+                        <div key={idx} className="text-xs text-slate-600 flex items-start gap-2 leading-relaxed">
+                          <span className="text-blue-500 mt-0.5">•</span>
                           <span>{detail}</span>
                         </div>
                       ))}
@@ -914,11 +1022,11 @@ export default function AnalysisPage() {
                         <span 
                           key={idx}
                           className={`text-xs px-2 py-1 rounded-full border ${
-                            point === '最善手' ? 'bg-green-800/30 text-green-300 border-green-700/50' :
-                            point === '重大なミス' ? 'bg-red-800/30 text-red-300 border-red-700/50' :
-                            point === 'ミス' ? 'bg-orange-800/30 text-orange-300 border-orange-700/50' :
-                            point === '決定的な手' ? 'bg-purple-800/30 text-purple-300 border-purple-700/50' :
-                            'bg-blue-800/30 text-blue-300 border-blue-700/50'
+                            point === '最善手' ? 'bg-emerald-700 text-white border-emerald-900' :
+                            point === '重大なミス' ? 'bg-red-100 text-red-700 border-red-200' :
+                            point === 'ミス' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                            point === '決定的な手' ? 'bg-purple-100 text-purple-600 border-purple-200' :
+                            'bg-blue-100 text-blue-700 border-blue-200'
                           }`}
                         >
                           {point}
@@ -931,17 +1039,17 @@ export default function AnalysisPage() {
 
                 {/* 解析統計 */}
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-3 border border-gray-600">
-                    <div className="text-xs text-gray-400 mb-1">全手数</div>
-                    <div className="font-bold text-lg text-blue-400">{history.length}</div>
+                  <div className="bg-gradient-to-br from-white to-slate-100 rounded-lg p-3 border border-slate-200">
+                    <div className="text-xs text-slate-500 mb-1">全手数</div>
+                    <div className="font-bold text-lg text-blue-600">{history.length}</div>
                   </div>
-                  <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-3 border border-gray-600">
-                    <div className="text-xs text-gray-400 mb-1">解析済み</div>
-                    <div className="font-bold text-lg text-green-400">{Object.keys(allMovesAnalysis).length - 1}</div>
+                  <div className="bg-gradient-to-br from-white to-slate-100 rounded-lg p-3 border border-slate-200">
+                    <div className="text-xs text-slate-500 mb-1">解析済み</div>
+                    <div className="font-bold text-lg text-emerald-600">{Object.keys(allMovesAnalysis).length - 1}</div>
                   </div>
-                  <div className="bg-gradient-to-br from-gray-700 to-gray-750 rounded-lg p-3 border border-gray-600">
-                    <div className="text-xs text-gray-400 mb-1">平均深さ</div>
-                    <div className="font-bold text-lg text-purple-400">
+                  <div className="bg-gradient-to-br from-white to-slate-100 rounded-lg p-3 border border-slate-200">
+                    <div className="text-xs text-slate-500 mb-1">平均深さ</div>
+                    <div className="font-bold text-lg text-purple-500">
                       {Math.round(Object.values(allMovesAnalysis).reduce((sum, a) => sum + (a.depth || 0), 0) / Math.max(1, Object.keys(allMovesAnalysis).length))}
                     </div>
                   </div>
@@ -951,25 +1059,25 @@ export default function AnalysisPage() {
           </div>
 
           {/* 現在の局面情報 */}
-          <div className="bg-gray-800 rounded-xl shadow-2xl p-4 border border-gray-700 mt-4">
-            <h3 className="text-lg font-semibold mb-3 flex items-center">
+          <div className="bg-white/90 rounded-xl shadow-lg p-4 border border-slate-200 mt-4">
+            <h3 className="text-lg font-semibold mb-3 flex items-center text-slate-800">
               <span className="mr-2">📍</span> 現在の局面
             </h3>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-400">手数:</span>
-                <span className="font-mono">
+                <span className="text-slate-600">手数:</span>
+                <span className="font-mono text-slate-800">
                   {currentIndex === -1 ? "初期位置" : `${currentIndex + 1}手目`}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-400">手番:</span>
-                <span>{chessGame.current?.turn() === "w" ? "白番" : "黒番"}</span>
+                <span className="text-slate-600">手番:</span>
+                <span className="text-slate-800">{chessGame.current?.turn() === "w" ? "白番" : "黒番"}</span>
               </div>
               {currentIndex >= 0 && history[currentIndex] && (
                 <div className="flex justify-between">
-                  <span className="text-gray-400">最後の手:</span>
-                  <span className="font-mono font-semibold">
+                  <span className="text-slate-600">最後の手:</span>
+                  <span className="font-mono font-semibold text-slate-900">
                     {history[currentIndex].san}
                   </span>
                 </div>
@@ -978,13 +1086,13 @@ export default function AnalysisPage() {
           </div>
 
           {/* 手のリストパネル */}
-          <div className="bg-gray-800 rounded-xl shadow-2xl p-4 border border-gray-700 mt-4">
-            <h3 className="text-lg font-semibold mb-3 flex items-center">
+          <div className="bg-white/90 rounded-xl shadow-lg p-4 border border-slate-200 mt-4">
+            <h3 className="text-lg font-semibold mb-3 flex items-center text-slate-800">
               <span className="mr-2">📋</span> 棋譜
             </h3>
             <div className="max-h-64 overflow-y-auto">
               {history.length === 0 ? (
-                <p className="text-gray-400 text-center py-4">棋譜が読み込まれていません</p>
+                <p className="text-slate-500 text-center py-4">棋譜が読み込まれていません</p>
               ) : (
                 <div className="space-y-1">
                   {/* 初期位置 */}
@@ -993,7 +1101,7 @@ export default function AnalysisPage() {
                     className={`w-full text-left px-2 py-1 rounded transition ${
                       currentIndex === -1
                         ? "bg-blue-600 text-white"
-                        : "hover:bg-gray-700 text-gray-300"
+                        : "hover:bg-blue-50 text-slate-700"
                     }`}
                   >
                     初期位置
@@ -1006,7 +1114,7 @@ export default function AnalysisPage() {
                       className={`w-full text-left px-2 py-1 rounded transition font-mono text-sm ${
                         currentIndex === index
                           ? "bg-blue-600 text-white"
-                          : "hover:bg-gray-700 text-gray-300"
+                          : "hover:bg-blue-50 text-slate-700"
                       }`}
                     >
                       <span className="flex items-center justify-between w-full">
@@ -1032,6 +1140,7 @@ export default function AnalysisPage() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }

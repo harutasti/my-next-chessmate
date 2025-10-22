@@ -56,6 +56,22 @@ export default function useStockfish({
         workerRef.current.postMessage(
           `setoption name Skill Level value ${currentDifficulty}`
         );
+        // 低難易度でのミス率を上げる
+        if (currentDifficulty <= 5) {
+          workerRef.current.postMessage(
+            `setoption name Skill Level Maximum Error value 900`
+          );
+          workerRef.current.postMessage(
+            `setoption name Skill Level Probability value 30`
+          );
+        } else if (currentDifficulty <= 10) {
+          workerRef.current.postMessage(
+            `setoption name Skill Level Maximum Error value 500`
+          );
+          workerRef.current.postMessage(
+            `setoption name Skill Level Probability value 20`
+          );
+        }
         return;
       }
 
@@ -150,6 +166,23 @@ export default function useStockfish({
       workerRef.current.postMessage(
         `setoption name Skill Level value ${clampedDifficulty}`
       );
+      
+      // 低難易度でのミス率を設定
+      if (clampedDifficulty <= 5) {
+        workerRef.current.postMessage(
+          `setoption name Skill Level Maximum Error value 900`
+        );
+        workerRef.current.postMessage(
+          `setoption name Skill Level Probability value 30`
+        );
+      } else if (clampedDifficulty <= 10) {
+        workerRef.current.postMessage(
+          `setoption name Skill Level Maximum Error value 500`
+        );
+        workerRef.current.postMessage(
+          `setoption name Skill Level Probability value 20`
+        );
+      }
     },
     [isReady]
   );

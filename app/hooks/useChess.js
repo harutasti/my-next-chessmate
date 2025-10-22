@@ -77,6 +77,37 @@ export default function useChess() {
     setHistory([]); // 棋譜をクリア
   }, []);
 
+  /**
+   * undo - 最後の手を取り消す
+   * @returns {object|null} - 成功時は取り消した手、失敗時は null
+   */
+  const undo = useCallback(() => {
+    const game = chessRef.current;
+    const undoneMove = game.undo();
+    
+    if (undoneMove) {
+      setFen(game.fen());
+      setHistory(game.history());
+    }
+    
+    return undoneMove;
+  }, []);
+
+  /**
+   * goToStart - 最初の局面に戻る（すべての手を取り消す）
+   */
+  const goToStart = useCallback(() => {
+    const game = chessRef.current;
+    
+    // すべての手を取り消す
+    while (game.history().length > 0) {
+      game.undo();
+    }
+    
+    setFen(game.fen());
+    setHistory([]);
+  }, []);
+
   // 外部に公開する状態と操作API
   return {
     fen, // 現在の盤面（FEN）
@@ -86,6 +117,8 @@ export default function useChess() {
     getLegalMoves, // 合法手の取得
     isGameOver, // ゲーム終了の判定
     resetGame, // ゲームのリセット
+    undo, // 一手戻る
+    goToStart, // 最初に戻る
     chess: chessRef.current, // chessインスタンスを公開
   };
 }
