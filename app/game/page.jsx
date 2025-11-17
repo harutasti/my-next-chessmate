@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import ChessBoard from "@/app/components/ChessBoard";
 import useChess from "@/app/hooks/useChess";
 import useStockfish from "@/app/hooks/useStockfish";
 
-export default function GamePage() {
+function GamePageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const mode = searchParams.get("mode"); // bot or local
@@ -687,5 +687,13 @@ export default function GamePage() {
       </div>
     </div>
   </div>
+  );
+}
+
+export default function GamePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <GamePageInner />
+    </Suspense>
   );
 }
