@@ -46,19 +46,21 @@ export default function EvaluationGraph({
     if (points.length === 0) return [];
 
     const total = points.length - 1;
+    const padding = 3; // 上下の余白
+    const graphHeight = 60 - (padding * 2); // 実際のグラフ描画範囲
 
     return points.map((point, idx) => {
       let clampedValue = clamp(point.numeric, -maxAbsValue, maxAbsValue);
       const x = total === 0 ? 0 : (idx / total) * 100;
       let y;
       if (point.numeric >= maxAbsValue) {
-        y = 0;
+        y = padding;
         clampedValue = maxAbsValue;
       } else if (point.numeric <= -maxAbsValue) {
-        y = 60;
+        y = 60 - padding;
         clampedValue = -maxAbsValue;
       } else {
-        y = ((maxAbsValue - clampedValue) / (2 * maxAbsValue)) * 60;
+        y = padding + ((maxAbsValue - clampedValue) / (2 * maxAbsValue)) * graphHeight;
       }
       return {
         ...point,
@@ -84,12 +86,15 @@ export default function EvaluationGraph({
     );
   }
 
-  const zeroLineY = ((maxAbsValue - 0) / (2 * maxAbsValue)) * 60;
+  const padding = 3;
+  const graphHeight = 60 - (padding * 2);
+  const zeroLineY = padding + ((maxAbsValue - 0) / (2 * maxAbsValue)) * graphHeight;
   const pathD = plottedPoints
     .map((point, idx) => `${idx === 0 ? "M" : "L"} ${point.x.toFixed(3)} ${point.y.toFixed(3)}`)
     .join(" ");
 
-  const areaPathD = `${pathD} L 100 60 L 0 60 Z`;
+  const bottomY = 60 - padding;
+  const areaPathD = `${pathD} L 100 ${bottomY} L 0 ${bottomY} Z`;
 
   const activeMoveIndex = hoveredMove ?? currentIndex;
   const activePoint =
@@ -99,7 +104,9 @@ export default function EvaluationGraph({
 
   const zeroLineColor = "rgba(100, 116, 139, 0.35)"; // slate-500 at low opacity
 
-  const tooltipTopPercent = 6; // 固定表示 (縦方向は変えない)
+  // ツールチップの位置を動的に調整（丸が上半分なら下に、下半分なら上に表示）
+  const isPointInUpperHalf = activePoint.y < 30;
+  const tooltipTopPercent = isPointInUpperHalf ? (activePoint.y / 60) * 100 + 15 : (activePoint.y / 60) * 100 - 15;
   const tooltipLeftPercent = clamp(activePoint.x, 4, 96);
 
   return (

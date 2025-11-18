@@ -26,23 +26,26 @@ const PIECE_VALUES = {
   'k': 0   // キング
 };
 
-// 駒の絵文字
-const PIECE_SYMBOLS = {
+// Wikipedia SVG駒画像のベースURL
+const PIECE_IMAGE_BASE = 'https://upload.wikimedia.org/wikipedia/commons';
+
+// 駒画像のURL（react-chessboardと同じWikipedia SVG）
+const PIECE_IMAGES = {
   'w': {
-    'p': '♙',
-    'n': '♘',
-    'b': '♗',
-    'r': '♖',
-    'q': '♕',
-    'k': '♔'
+    'p': `${PIECE_IMAGE_BASE}/4/45/Chess_plt45.svg`,
+    'n': `${PIECE_IMAGE_BASE}/7/70/Chess_nlt45.svg`,
+    'b': `${PIECE_IMAGE_BASE}/b/b1/Chess_blt45.svg`,
+    'r': `${PIECE_IMAGE_BASE}/7/72/Chess_rlt45.svg`,
+    'q': `${PIECE_IMAGE_BASE}/1/15/Chess_qlt45.svg`,
+    'k': `${PIECE_IMAGE_BASE}/4/42/Chess_klt45.svg`
   },
   'b': {
-    'p': '♟',
-    'n': '♞',
-    'b': '♝',
-    'r': '♜',
-    'q': '♛',
-    'k': '♚'
+    'p': `${PIECE_IMAGE_BASE}/c/c7/Chess_pdt45.svg`,
+    'n': `${PIECE_IMAGE_BASE}/e/ef/Chess_ndt45.svg`,
+    'b': `${PIECE_IMAGE_BASE}/9/98/Chess_bdt45.svg`,
+    'r': `${PIECE_IMAGE_BASE}/f/ff/Chess_rdt45.svg`,
+    'q': `${PIECE_IMAGE_BASE}/4/47/Chess_qdt45.svg`,
+    'k': `${PIECE_IMAGE_BASE}/f/f0/Chess_kdt45.svg`
   }
 };
 
@@ -166,11 +169,13 @@ export default function AnalysisPage() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isInVariationMode, setIsInVariationMode] = useState(false);
   const [savedHistoryPosition, setSavedHistoryPosition] = useState(null);
-  
+  const [boardOrientation, setBoardOrientation] = useState('white');
+
   const router = useRouter();
   const chessGame = useRef(null);
   const boardWrapperRef = useRef(null);
   const latestAnalysisRef = useRef({ evaluation: null, bestMove: null, depth: null });
+  const moveListRef = useRef(null);
 
   // Stockfishフックを使用
   const {
@@ -228,6 +233,17 @@ export default function AnalysisPage() {
     window.addEventListener("resize", calculateBoardSize);
     return () => window.removeEventListener("resize", calculateBoardSize);
   }, []);
+
+  // 現在の手に自動スクロール
+  useEffect(() => {
+    if (moveListRef.current && currentIndex >= -1) {
+      const targetId = currentIndex === -1 ? 'move-initial' : `move-${currentIndex}`;
+      const targetElement = document.getElementById(targetId);
+      if (targetElement) {
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [currentIndex]);
 
   // PGN解析関数
   const parsePgnHeaders = (pgnText) => {
@@ -677,102 +693,150 @@ export default function AnalysisPage() {
           background: `radial-gradient(circle at ${mousePosition.x}px ${mousePosition.y}px, rgba(59, 130, 246, 0.25), transparent 55%)`,
         }}
       />
-      <div className="relative z-10 flex min-h-screen flex-col items-center p-4">
-        {/* ヘッダー */}
-      <header className="mb-6 text-center">
-        <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900 drop-shadow-sm">
-          棋譜解析
-        </h1>
-        <p className="text-slate-600 mt-2">PGN形式の棋譜を読み込んで解析します</p>
-        <button
-          onClick={() => router.push("/")}
-          className="mt-3 group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
-        >
-          ホームに戻る
-        </button>
-      </header>
+      <div className="relative z-10 flex min-h-screen">
+        {/* 左サイドバー */}
+        <div className="w-80 bg-white/95 border-r border-slate-200 p-4 overflow-y-auto">
+          {/* タイトル */}
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900">
+              棋譜解析
+            </h1>
+            <p className="text-slate-600 text-sm mt-1">PGN形式の棋譜を解析</p>
+          </div>
 
-        {/* PGN入力エリア */}
-        <div className="w-full max-w-7xl mb-6">
-        <div className="bg-white/90 rounded-xl shadow-lg p-6 border border-slate-200">
-          <h3 className="text-xl font-semibold mb-3 flex items-center text-slate-800">
-            <span className="mr-2">📝</span> PGN入力
-          </h3>
-          <textarea
-            value={pgn}
-            onChange={(e) => setPgn(e.target.value)}
-            placeholder="ここにPGN形式の棋譜を貼り付けてください..."
-            rows="8"
-            className="w-full p-3 bg-slate-100 text-slate-900 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-sm"
-            disabled={isLoadingPgn}
-          />
-          <div className="mt-3 flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={loadPgn}
-                className="group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 px-8 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isLoadingPgn || isAnalyzingAll}
-              >
-                <span className="relative z-10">
-                  {isLoadingPgn ? "読み込み中..." : "PGNを読み込む"}
-                </span>
-                <div className="absolute inset-0 rounded-lg bg-white/0 group-hover:bg-white/10 transition-all duration-300"></div>
-              </button>
+          {/* ホームに戻るボタン */}
+          <button
+            onClick={() => router.push("/")}
+            className="w-full mb-3 group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+          >
+            ← ホームに戻る
+          </button>
 
-              <button
-                onClick={() => analyzeAllMoves(history)}
-                className="group relative bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold py-3 px-8 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:grayscale"
-                disabled={!engineReady || history.length === 0 || isAnalyzingAll || (allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0)}
-                title={history.length === 0 ? "PGNを読み込むと解析可能" : (allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0) ? "既に解析済みです" : ""}
-              >
-                <span className="relative z-10 flex items-center gap-2">
-                  <span>📊</span>
-                  {isAnalyzingAll ? `解析中... ${analysisProgress}%` : "すべての手を詳細解析"}
-                </span>
-                <div className="absolute inset-0 rounded-lg bg-white/0 group-hover:bg-white/10 transition-all duration-300"></div>
-              </button>
-            </div>
+          {/* 反転ボタン */}
+          <button
+            onClick={() => setBoardOrientation(prev => prev === 'white' ? 'black' : 'white')}
+            className="w-full mb-6 group relative bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+          >
+            🔄 盤面を反転
+          </button>
 
-            <div className="flex items-center justify-between">
-              {errorMessage && (
-                <p className="text-red-500 text-sm">{errorMessage}</p>
-              )}
-              {engineReady && !isAnalyzingAll && (
-                <span className="text-emerald-600 text-sm flex items-center">
-                  <span className="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></span>
-                  エンジン準備完了
-                </span>
-              )}
-              {isAnalyzingAll && (
-                <div className="text-blue-600 text-sm flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                    <span>全手解析中... {analysisProgress}%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 mt-2">
-                    <div
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${analysisProgress}%` }}
-                    />
-                  </div>
+          {/* PGN入力エリア */}
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold mb-2 text-slate-800">
+              📝 PGN入力
+            </h3>
+            <textarea
+              value={pgn}
+              onChange={(e) => setPgn(e.target.value)}
+              placeholder="PGN形式の棋譜を貼り付け..."
+              rows="6"
+              className="w-full p-2 bg-slate-50 text-slate-900 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-xs"
+              disabled={isLoadingPgn}
+            />
+          </div>
+
+          {/* 解析ボタン */}
+          <div className="mb-4 flex flex-col gap-2">
+            <button
+              onClick={loadPgn}
+              className="w-full group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isLoadingPgn || isAnalyzingAll}
+            >
+              {isLoadingPgn ? "読み込み中..." : "PGNを読み込む"}
+            </button>
+
+            <button
+              onClick={() => analyzeAllMoves(history)}
+              className="w-full group relative bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:grayscale"
+              disabled={!engineReady || history.length === 0 || isAnalyzingAll || (allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0)}
+              title={history.length === 0 ? "PGNを読み込むと解析可能" : (allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0) ? "既に解析済みです" : ""}
+            >
+              <span className="flex items-center justify-center gap-1 text-sm">
+                <span>📊</span>
+                {isAnalyzingAll ? `解析中 ${analysisProgress}%` : "全手を詳細解析"}
+              </span>
+            </button>
+          </div>
+
+          {/* ステータス表示 */}
+          <div className="mb-4">
+            {errorMessage && (
+              <p className="text-red-500 text-xs mb-2">{errorMessage}</p>
+            )}
+            {engineReady && !isAnalyzingAll && (
+              <div className="text-emerald-600 text-xs flex items-center">
+                <span className="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></span>
+                エンジン準備完了
+              </div>
+            )}
+            {isAnalyzingAll && (
+              <div className="text-blue-600 text-xs">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                  <span>全手解析中... {analysisProgress}%</span>
                 </div>
-              )}
-            </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${analysisProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
 
-      {/* メインコンテンツ */}
-      <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* メインコンテンツ */}
+        <div className="flex-1 p-4 overflow-y-auto">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* 左側・中央：チェス盤（より大きく） */}
         <div className="lg:col-span-2">
           <div className="bg-white/90 rounded-xl shadow-lg p-2 border border-slate-200">
+            {/* 上側の取得駒（白視点なら黒、黒視点なら白） */}
+            {fen && fen !== "start" && (() => {
+              const capturedInfo = getCapturedPieces(fen);
+              const isWhiteOrientation = boardOrientation === 'white';
+              const topCaptured = isWhiteOrientation ? capturedInfo.black : capturedInfo.white;
+              const topAdvantage = isWhiteOrientation ? -capturedInfo.advantage : capturedInfo.advantage;
+              const topPieceColor = isWhiteOrientation ? 'w' : 'b';
+
+              return (
+                <div className="mb-2 bg-slate-50 rounded-lg p-2 border border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-600">{isWhiteOrientation ? '黒' : '白'}:</span>
+                    <div className="flex items-center gap-1">
+                      {Object.keys(topCaptured).length > 0 ? (
+                        <>
+                          {Object.entries(topCaptured).map(([piece, count]) =>
+                            Array.from({ length: count }).map((_, i) => (
+                              <img
+                                key={`${piece}-${i}`}
+                                src={PIECE_IMAGES[topPieceColor][piece]}
+                                alt={piece}
+                                className="w-6 h-6"
+                              />
+                            ))
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400">―</span>
+                      )}
+                    </div>
+                    <span className={`text-sm font-semibold ${topAdvantage > 0 ? 'text-slate-800' : topAdvantage < 0 ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {topAdvantage > 0 ? '+' : ''}{topAdvantage}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
             <div ref={boardWrapperRef} className="w-full aspect-square">
               <Chessboard
                 position={fen}
                 arePiecesDraggable={true}
                 onPieceDrop={handlePieceDrop}
                 boardWidth={dynamicBoardWidth}
+                boardOrientation={boardOrientation}
                 customDarkSquareStyle={{ backgroundColor: "#1e3a5f" }}
                 customLightSquareStyle={{ backgroundColor: "#e8eef5" }}
                 customSquareStyles={(() => {
@@ -829,6 +893,44 @@ export default function AnalysisPage() {
                 })()}
               />
             </div>
+
+            {/* 下側の取得駒（白視点なら白、黒視点なら黒） */}
+            {fen && fen !== "start" && (() => {
+              const capturedInfo = getCapturedPieces(fen);
+              const isWhiteOrientation = boardOrientation === 'white';
+              const bottomCaptured = isWhiteOrientation ? capturedInfo.white : capturedInfo.black;
+              const bottomAdvantage = isWhiteOrientation ? capturedInfo.advantage : -capturedInfo.advantage;
+              const bottomPieceColor = isWhiteOrientation ? 'b' : 'w';
+
+              return (
+                <div className="mt-2 bg-slate-50 rounded-lg p-2 border border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-600">{isWhiteOrientation ? '白' : '黒'}:</span>
+                    <div className="flex items-center gap-1">
+                      {Object.keys(bottomCaptured).length > 0 ? (
+                        <>
+                          {Object.entries(bottomCaptured).map(([piece, count]) =>
+                            Array.from({ length: count }).map((_, i) => (
+                              <img
+                                key={`${piece}-${i}`}
+                                src={PIECE_IMAGES[bottomPieceColor][piece]}
+                                alt={piece}
+                                className="w-6 h-6"
+                              />
+                            ))
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400">―</span>
+                      )}
+                    </div>
+                    <span className={`text-sm font-semibold ${bottomAdvantage > 0 ? 'text-blue-600' : bottomAdvantage < 0 ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {bottomAdvantage > 0 ? '+' : ''}{bottomAdvantage}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* バリエーションモード警告 */}
             {isInVariationMode && (
@@ -919,7 +1021,7 @@ export default function AnalysisPage() {
 
         {/* 右側：解析パネル */}
         <div className="lg:col-span-1">
-          <div className="bg-white/90 rounded-xl shadow-lg p-4 border border-slate-200">
+          <div className="bg-red-50 rounded-xl shadow-lg p-4 border border-red-200">
             <h3 className="text-lg font-semibold mb-3 flex items-center justify-between text-slate-800">
               <span className="flex items-center">
                 <span className="mr-2">🔍</span> エンジン解析
@@ -943,73 +1045,21 @@ export default function AnalysisPage() {
             />
 
             {/* 現在の局面の評価バー */}
-            {currentIndex >= -1 && allMovesAnalysis[currentIndex] && (
-              <div className="mb-4">
-                <div className="h-8 bg-slate-200 rounded-lg overflow-hidden relative">
+            {(currentIndex >= -1 && allMovesAnalysis[currentIndex]) || (isInVariationMode && evaluation !== null) ? (
+              <div className="mb-4 mt-6">
+                <div className="h-8 bg-slate-800 rounded-lg overflow-hidden relative border border-slate-300">
                   <div
-                    className="h-full bg-gradient-to-r from-gray-100 to-white transition-all duration-500"
+                    className="h-full bg-white transition-all duration-500"
                     style={{ width: `${(() => {
-                      const eval_ = allMovesAnalysis[currentIndex].evaluation;
-                      // Adjust evaluation for bar display based on turn
-                      const isBlackTurn = currentIndex % 2 === 0;
-                      let adjustedEval = eval_;
-                      
-                      if (typeof eval_ === 'number') {
-                        adjustedEval = isBlackTurn ? -eval_ : eval_;
-                      } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
-                        const mateIn = parseInt(eval_.substring(1), 10);
-                        if (Number.isNaN(mateIn)) {
-                          adjustedEval = 0;
-                        } else if (mateIn === 0) {
-                          adjustedEval = isBlackTurn ? 100 : -100;
-                        } else {
-                          const perspectiveMate = isBlackTurn ? -mateIn : mateIn;
-                          adjustedEval = perspectiveMate > 0 ? 100 : -100;
-                        }
-                      }
-                      
-                      return getEvalBarWidthForValue(adjustedEval);
+                      // バリエーションモード中は現在の評価値を使用、それ以外は解析データを使用
+                      const eval_ = isInVariationMode ? evaluation : allMovesAnalysis[currentIndex].evaluation;
+                      // 評価値は常に白視点で保存されているので、そのまま使用
+                      return getEvalBarWidthForValue(eval_);
                     })()}%` }}
                   />
                   <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold">
-                    <span className={(() => {
-                      const eval_ = allMovesAnalysis[currentIndex].evaluation;
-                      const isBlackTurn = currentIndex % 2 === 0;
-                      let adjustedEval = eval_;
-                      
-                      if (typeof eval_ === 'number') {
-                        adjustedEval = isBlackTurn ? -eval_ : eval_;
-                      } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
-                        const mateIn = parseInt(eval_.substring(1), 10);
-                        if (Number.isNaN(mateIn)) {
-                          adjustedEval = 0;
-                        } else if (mateIn === 0) {
-                          adjustedEval = isBlackTurn ? 100 : -100;
-                        } else {
-                          const perspectiveMate = isBlackTurn ? -mateIn : mateIn;
-                          adjustedEval = perspectiveMate > 0 ? 100 : -100;
-                        }
-                      }
-                      
-                      return getEvalBarWidthForValue(adjustedEval) > 50 ? "text-slate-800" : "text-white";
-                    })()}>
-                      {(() => {
-                        const eval_ = allMovesAnalysis[currentIndex].evaluation;
-                        // Display evaluation from current player's perspective
-                        // After White's move (currentIndex even), it's Black's turn, so negate
-                        // After Black's move (currentIndex odd), it's White's turn, so keep as is
-                        const isBlackTurn = currentIndex % 2 === 0;
-                        
-                        if (typeof eval_ === 'number') {
-                          const displayEval = isBlackTurn ? -eval_ : eval_;
-                          return displayEval.toFixed(2);
-                        } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
-                          // For mate evaluations, also adjust perspective
-                          const mateIn = parseInt(eval_.substring(1));
-                          return isBlackTurn ? `M${-mateIn}` : eval_;
-                        }
-                        return eval_ || '0.00';
-                      })()}
+                    <span className="bg-green-500 text-white px-2 py-0.5 rounded">
+                      {isInVariationMode ? formatEvaluation(evaluation) : formatEvaluation(allMovesAnalysis[currentIndex].evaluation)}
                     </span>
                   </div>
                 </div>
@@ -1018,7 +1068,7 @@ export default function AnalysisPage() {
                   <span>白優勢</span>
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* メトリクス情報 */}
             {allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0 && (
@@ -1066,24 +1116,7 @@ export default function AnalysisPage() {
                         </div>
                       );
                     })()}
-                    
-                    {/* 最善手との比較 */}
-                    {currentIndex > 0 && allMovesAnalysis[currentIndex - 1]?.bestMove && (
-                      <div className="bg-slate-100 rounded-lg p-2 mb-2">
-                        <div className="text-xs text-slate-500 mb-1">前の局面での最善手</div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-mono text-emerald-600">
-                            {moveAnalyzer.current.convertMoveToJapanese(allMovesAnalysis[currentIndex - 1].bestMove)}
-                          </span>
-                          {moveEvaluations[currentIndex]?.wasBestMove && (
-                            <span className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded">
-                              最善手を指しました
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    
+
                     {/* 評価値の変化 */}
                     {moveEvaluations[currentIndex] && moveEvaluations[currentIndex].previousEvaluation !== null && (
                       <div className="bg-slate-100 rounded-lg p-2">
@@ -1128,103 +1161,8 @@ export default function AnalysisPage() {
                   </div>
                 </div>
               )}
-              
-              {/* 現在の局面の解析結果 */}
-              {currentIndex >= -1 && allMovesAnalysis[currentIndex] && (
-                <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-4 border border-slate-200 mb-3">
-                  <div className="text-sm text-slate-600 font-medium mb-2">現在の局面の評価</div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-lg font-bold text-slate-900">
-                      {(() => {
-                        const eval_ = allMovesAnalysis[currentIndex].evaluation;
-                        // Display evaluation from current player's perspective
-                        const isBlackTurn = currentIndex % 2 === 0;
-                        
-                        if (typeof eval_ === 'number') {
-                          const displayEval = isBlackTurn ? -eval_ : eval_;
-                          return displayEval.toFixed(2);
-                        } else if (typeof eval_ === 'string' && eval_.startsWith('M')) {
-                          const mateIn = parseInt(eval_.substring(1));
-                          return isBlackTurn ? `M${-mateIn}` : eval_;
-                        }
-                        return eval_ || '0.00';
-                      })()}
-                    </span>
-                    {allMovesAnalysis[currentIndex].bestMove && (
-                      <span className="text-sm text-emerald-600">
-                        最善手: {moveAnalyzer.current.convertMoveToJapanese(allMovesAnalysis[currentIndex].bestMove)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* 自然言語による手の説明 */}
-              {currentIndex >= 0 && moveExplanations[currentIndex] && (
-                  <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg p-4 border border-blue-200/60">
-                  <div className="text-sm font-medium text-blue-700 mb-2 flex items-center gap-2">
-                    <span>📝</span>
-                    <span>手の解説</span>
-                  </div>
-                  
-                  {/* 要約 */}
-                  <div className="text-sm text-slate-700 mb-3 font-medium">
-                    {moveExplanations[currentIndex].summary}
-                  </div>
-                  
-                  {/* 詳細 */}
-                  {moveExplanations[currentIndex].details.length > 0 && (
-                    <div className="space-y-2 mb-3">
-                      {moveExplanations[currentIndex].details.map((detail, idx) => (
-                        <div key={idx} className="text-xs text-slate-600 flex items-start gap-2 leading-relaxed">
-                          <span className="text-blue-500 mt-0.5">•</span>
-                          <span>{detail}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* キーポイント */}
-                  {moveExplanations[currentIndex].keyPoints.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      {moveExplanations[currentIndex].keyPoints.map((point, idx) => (
-                        <span 
-                          key={idx}
-                          className={`text-xs px-2 py-1 rounded-full border ${
-                            point === '最善手' ? 'bg-emerald-700 text-white border-emerald-900' :
-                            point === '重大なミス' ? 'bg-red-100 text-red-700 border-red-200' :
-                            point === 'ミス' ? 'bg-amber-100 text-amber-700 border-amber-200' :
-                            point === '決定的な手' ? 'bg-purple-100 text-purple-600 border-purple-200' :
-                            'bg-blue-100 text-blue-700 border-blue-200'
-                          }`}
-                        >
-                          {point}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-                {/* 解析統計 */}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-gradient-to-br from-white to-slate-100 rounded-lg p-3 border border-slate-200">
-                    <div className="text-xs text-slate-500 mb-1">全手数</div>
-                    <div className="font-bold text-lg text-blue-600">{history.length}</div>
-                  </div>
-                  <div className="bg-gradient-to-br from-white to-slate-100 rounded-lg p-3 border border-slate-200">
-                    <div className="text-xs text-slate-500 mb-1">解析済み</div>
-                    <div className="font-bold text-lg text-emerald-600">{Object.keys(allMovesAnalysis).length - 1}</div>
-                  </div>
-                  <div className="bg-gradient-to-br from-white to-slate-100 rounded-lg p-3 border border-slate-200">
-                    <div className="text-xs text-slate-500 mb-1">平均深さ</div>
-                    <div className="font-bold text-lg text-purple-500">
-                      {Math.round(Object.values(allMovesAnalysis).reduce((sum, a) => sum + (a.depth || 0), 0) / Math.max(1, Object.keys(allMovesAnalysis).length))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+            </div>
+          )}
           </div>
 
           {/* 現在の局面情報 */}
@@ -1252,77 +1190,6 @@ export default function AnalysisPage() {
                 </div>
               )}
             </div>
-
-            {/* 駒の取得状況 */}
-            {fen && fen !== "start" && (() => {
-              const capturedInfo = getCapturedPieces(fen);
-              const hasCaptures = capturedInfo.whitePoints > 0 || capturedInfo.blackPoints > 0;
-
-              return hasCaptures ? (
-                <div className="mt-4 pt-4 border-t border-slate-200">
-                  <div className="text-sm font-medium text-slate-700 mb-2">取得した駒</div>
-
-                  {/* 白が取得した駒 */}
-                  <div className="mb-2">
-                    <div className="text-xs text-slate-500 mb-1">白</div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {Object.keys(capturedInfo.white).length > 0 ? (
-                        <>
-                          {Object.entries(capturedInfo.white).map(([piece, count]) => (
-                            <span key={piece} className="text-lg">
-                              {PIECE_SYMBOLS['b'][piece].repeat(count)}
-                            </span>
-                          ))}
-                          <span className="text-xs text-slate-600 ml-1">
-                            ({capturedInfo.whitePoints}点)
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-xs text-slate-400">なし</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 黒が取得した駒 */}
-                  <div className="mb-2">
-                    <div className="text-xs text-slate-500 mb-1">黒</div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {Object.keys(capturedInfo.black).length > 0 ? (
-                        <>
-                          {Object.entries(capturedInfo.black).map(([piece, count]) => (
-                            <span key={piece} className="text-lg">
-                              {PIECE_SYMBOLS['w'][piece].repeat(count)}
-                            </span>
-                          ))}
-                          <span className="text-xs text-slate-600 ml-1">
-                            ({capturedInfo.blackPoints}点)
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-xs text-slate-400">なし</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 駒点数の優劣 */}
-                  {capturedInfo.advantage !== 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-200">
-                      <div className="text-sm font-semibold flex items-center justify-between">
-                        <span className="text-slate-600">駒点数優劣:</span>
-                        <span className={`${
-                          capturedInfo.advantage > 0
-                            ? 'text-blue-600'
-                            : 'text-slate-800'
-                        }`}>
-                          {capturedInfo.advantage > 0 ? '白' : '黒'}
-                          <span className="ml-1 text-lg">+{Math.abs(capturedInfo.advantage)}</span>
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : null;
-            })()}
           </div>
 
           {/* 手のリストパネル */}
@@ -1330,57 +1197,93 @@ export default function AnalysisPage() {
             <h3 className="text-lg font-semibold mb-3 flex items-center text-slate-800">
               <span className="mr-2">📋</span> 棋譜
             </h3>
-            <div className="max-h-64 overflow-y-auto">
+            <div ref={moveListRef} className="max-h-64 overflow-y-auto">
               {history.length === 0 ? (
                 <p className="text-slate-500 text-center py-4">棋譜が読み込まれていません</p>
               ) : (
-                <div className="space-y-1">
+                <div>
                   {/* 初期位置 */}
                   <button
+                    id="move-initial"
                     onClick={() => jumpToMove(-1)}
-                    className={`w-full text-left px-2 py-1 rounded transition ${
+                    className={`w-full text-left px-3 py-2 rounded-lg mb-2 transition font-medium ${
                       currentIndex === -1
-                        ? "bg-blue-600 text-white"
-                        : "hover:bg-blue-50 text-slate-700"
+                        ? "bg-blue-600 text-white ring-2 ring-blue-400"
+                        : "hover:bg-slate-100 text-slate-600"
                     }`}
                   >
                     初期位置
                   </button>
-                  {/* 各手 */}
-                  {history.map((move, index) => (
-                    <button
-                      key={index}
-                      onClick={() => jumpToMove(index)}
-                      className={`w-full text-left px-2 py-1 rounded transition font-mono text-sm ${
-                        currentIndex === index
-                          ? "bg-blue-600 text-white"
-                          : "hover:bg-blue-50 text-slate-700"
-                      }`}
-                    >
-                      <span className="flex items-center justify-between w-full">
-                        <span>
-                          {Math.floor(index / 2) + 1}.
-                          {index % 2 === 0 ? " " : "... "}
-                          {move.san}
-                        </span>
-                        {(() => {
-                          const quality = getMoveQuality(index);
-                          return quality && quality.symbol ? (
-                            <span className={`font-bold ${quality.color}`}>
-                              {quality.symbol}
+                  {/* 2列表示の棋譜 */}
+                  <div className="space-y-1">
+                    {Array.from({ length: Math.ceil(history.length / 2) }).map((_, rowIndex) => {
+                      const whiteIndex = rowIndex * 2;
+                      const blackIndex = rowIndex * 2 + 1;
+                      const whiteMove = history[whiteIndex];
+                      const blackMove = history[blackIndex];
+                      const whiteQuality = getMoveQuality(whiteIndex);
+                      const blackQuality = blackMove ? getMoveQuality(blackIndex) : null;
+
+                      return (
+                        <div key={rowIndex} className="flex items-stretch gap-1">
+                          {/* 手番号 */}
+                          <div className="w-8 flex-shrink-0 flex items-center justify-center text-sm font-semibold text-slate-400">
+                            {rowIndex + 1}.
+                          </div>
+                          {/* 白の手 */}
+                          <button
+                            id={`move-${whiteIndex}`}
+                            onClick={() => jumpToMove(whiteIndex)}
+                            className={`flex-1 text-left px-3 py-2 rounded-lg transition font-mono text-base ${
+                              currentIndex === whiteIndex
+                                ? "bg-blue-600 text-white ring-2 ring-blue-400 font-bold"
+                                : "bg-slate-50 hover:bg-slate-100 text-slate-800"
+                            }`}
+                          >
+                            <span className="flex items-center justify-between">
+                              <span>{whiteMove.san}</span>
+                              {whiteQuality && whiteQuality.symbol && (
+                                <span className={`font-bold ${currentIndex === whiteIndex ? 'text-white' : whiteQuality.color}`}>
+                                  {whiteQuality.symbol}
+                                </span>
+                              )}
                             </span>
-                          ) : null;
-                        })()}
-                      </span>
-                    </button>
-                  ))}
+                          </button>
+                          {/* 黒の手 */}
+                          {blackMove ? (
+                            <button
+                              id={`move-${blackIndex}`}
+                              onClick={() => jumpToMove(blackIndex)}
+                              className={`flex-1 text-left px-3 py-2 rounded-lg transition font-mono text-base ${
+                                currentIndex === blackIndex
+                                  ? "bg-blue-600 text-white ring-2 ring-blue-400 font-bold"
+                                  : "bg-slate-200 hover:bg-slate-300 text-slate-800"
+                              }`}
+                            >
+                              <span className="flex items-center justify-between">
+                                <span>{blackMove.san}</span>
+                                {blackQuality && blackQuality.symbol && (
+                                  <span className={`font-bold ${currentIndex === blackIndex ? 'text-white' : blackQuality.color}`}>
+                                    {blackQuality.symbol}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="flex-1"></div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
       </div>
-    </div>
+        </div>
+      </div>
     </div>
   );
 }
