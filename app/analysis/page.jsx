@@ -170,10 +170,15 @@ export default function AnalysisPage() {
   const [isInVariationMode, setIsInVariationMode] = useState(false);
   const [savedHistoryPosition, setSavedHistoryPosition] = useState(null);
   const [boardOrientation, setBoardOrientation] = useState('white');
+  const [selectedSquare, setSelectedSquare] = useState(null);
+  const [legalMoves, setLegalMoves] = useState([]);
+  const [variationEvalBefore, setVariationEvalBefore] = useState(null);
+  const [variationLastMove, setVariationLastMove] = useState(null);
 
   const router = useRouter();
   const chessGame = useRef(null);
   const boardWrapperRef = useRef(null);
+  const mainAreaRef = useRef(null);
   const latestAnalysisRef = useRef({ evaluation: null, bestMove: null, depth: null });
   const moveListRef = useRef(null);
 
@@ -223,26 +228,28 @@ export default function AnalysisPage() {
   // ボードサイズの動的調整（高さベース・チェス盤中心）
   useEffect(() => {
     const calculateBoardSize = () => {
-      // ビューポートサイズを取得
-      const viewportHeight = window.innerHeight;
+      if (!mainAreaRef.current) return;
+
+      // メインエリアの実際のサイズを取得
+      const mainAreaHeight = mainAreaRef.current.clientHeight;
+      const mainAreaWidth = mainAreaRef.current.clientWidth;
+
+      // メインエリア内の予約スペース（取得駒表示x2 + ナビボタン + 凡例 + パディング）
+      const reservedHeight = 40 + 40 + 28 + 32 + 16; // 156px
+      const availableHeight = mainAreaHeight - reservedHeight;
+
+      // 右サイドバー幅を画面幅に応じて計算
       const viewportWidth = window.innerWidth;
+      let rightSidebarWidth = 240; // デフォルト (w-60)
+      if (viewportWidth >= 1280) rightSidebarWidth = 320; // xl: w-80
+      else if (viewportWidth >= 1024) rightSidebarWidth = 288; // lg: w-72
+      else if (viewportWidth >= 768) rightSidebarWidth = 256; // md: w-64
 
-      // 高さ方向: パディング + 取得駒表示 + ナビボタン + 凡例
-      const reservedHeight = 32 + 40 + 40 + 56 + 40 + 16; // 224px
-      const availableHeight = viewportHeight - reservedHeight;
+      // 幅方向はメインエリアの幅から右サイドバーとgapを引く
+      const availableWidth = mainAreaWidth - rightSidebarWidth - 32;
 
-      // サイドバー幅を画面幅に応じて計算
-      let sidebarWidth = 240; // デフォルト (w-60)
-      if (viewportWidth >= 1280) sidebarWidth = 320; // xl: w-80
-      else if (viewportWidth >= 1024) sidebarWidth = 288; // lg: w-72
-      else if (viewportWidth >= 768) sidebarWidth = 256; // md: w-64
-
-      // 幅方向: 左サイドバー + 右パネル + パディング + gap
-      const reservedWidth = sidebarWidth * 2 + 32 + 32;
-      const availableWidth = viewportWidth - reservedWidth;
-
-      // 高さと幅の小さい方を採用（上限なし）
-      const boardSize = Math.min(availableHeight, availableWidth);
+      // 高さと幅の小さい方を採用（上限なし）、余白を確保
+      const boardSize = Math.min(availableHeight, availableWidth) - 24;
       setDynamicBoardWidth(Math.max(boardSize, 300));
     };
     calculateBoardSize();
@@ -356,7 +363,13 @@ export default function AnalysisPage() {
     if (isInVariationMode) {
       setIsInVariationMode(false);
       setSavedHistoryPosition(null);
+      setVariationEvalBefore(null);
+      setVariationLastMove(null);
     }
+
+    // 選択をクリア
+    setSelectedSquare(null);
+    setLegalMoves([]);
   }, [currentIndex, history, isInVariationMode]);
 
   // 特定の手へジャンプ
@@ -384,7 +397,13 @@ export default function AnalysisPage() {
     if (isInVariationMode) {
       setIsInVariationMode(false);
       setSavedHistoryPosition(null);
+      setVariationEvalBefore(null);
+      setVariationLastMove(null);
     }
+
+    // 選択をクリア
+    setSelectedSquare(null);
+    setLegalMoves([]);
   };
 
   // 駒を手動で動かすハンドラー
@@ -395,6 +414,10 @@ export default function AnalysisPage() {
         setIsInVariationMode(true);
         setSavedHistoryPosition(currentIndex);
       }
+
+      // 移動前の評価を保存
+      const evalBefore = isInVariationMode ? evaluation : (allMovesAnalysis[currentIndex]?.evaluation ?? 0);
+      setVariationEvalBefore(evalBefore);
 
       const move = chessGame.current.move({
         from: sourceSquare,
@@ -409,15 +432,85 @@ export default function AnalysisPage() {
         from: sourceSquare,
         to: targetSquare
       });
+      setVariationLastMove(move.san);
 
       // 新しい局面を解析
       if (analyzePosition) {
         analyzePosition(chessGame.current.fen(), 15);
       }
 
+      // 選択をクリア
+      setSelectedSquare(null);
+      setLegalMoves([]);
+
       return true;
     } catch (error) {
       return false;
+    }
+  };
+
+  // マスをクリックしたときのハンドラー
+  const handleSquareClick = (square) => {
+    if (!chessGame.current) return;
+
+    // 既に選択されているマスをクリックした場合は選択解除
+    if (selectedSquare === square) {
+      setSelectedSquare(null);
+      setLegalMoves([]);
+      return;
+    }
+
+    // 合法手の中に選択されたマスがあれば移動
+    if (selectedSquare && legalMoves.includes(square)) {
+      // バリエーションモードに入る前に現在位置を保存
+      if (!isInVariationMode) {
+        setIsInVariationMode(true);
+        setSavedHistoryPosition(currentIndex);
+      }
+
+      // 移動前の評価を保存
+      const evalBefore = isInVariationMode ? evaluation : (allMovesAnalysis[currentIndex]?.evaluation ?? 0);
+      setVariationEvalBefore(evalBefore);
+
+      try {
+        const move = chessGame.current.move({
+          from: selectedSquare,
+          to: square,
+          promotion: 'q',
+        });
+
+        if (move) {
+          setFen(chessGame.current.fen());
+          setLastMove({
+            from: selectedSquare,
+            to: square
+          });
+          setVariationLastMove(move.san);
+
+          // 新しい局面を解析
+          if (analyzePosition) {
+            analyzePosition(chessGame.current.fen(), 15);
+          }
+        }
+      } catch (error) {
+        // 無効な手
+      }
+
+      setSelectedSquare(null);
+      setLegalMoves([]);
+      return;
+    }
+
+    // 駒があるマスをクリックした場合は選択して合法手を表示
+    const piece = chessGame.current.get(square);
+    if (piece && piece.color === chessGame.current.turn()) {
+      setSelectedSquare(square);
+      // 合法手を取得
+      const moves = chessGame.current.moves({ square, verbose: true });
+      setLegalMoves(moves.map(m => m.to));
+    } else {
+      setSelectedSquare(null);
+      setLegalMoves([]);
     }
   };
 
@@ -428,6 +521,8 @@ export default function AnalysisPage() {
     }
     setIsInVariationMode(false);
     setSavedHistoryPosition(null);
+    setVariationEvalBefore(null);
+    setVariationLastMove(null);
   };
 
   // 全ての手を解析
@@ -717,7 +812,7 @@ export default function AnalysisPage() {
       />
       <div className="relative z-10 flex h-screen overflow-hidden">
         {/* 左サイドバー */}
-        <div className="w-60 md:w-64 lg:w-72 xl:w-80 bg-white/95 border-r border-slate-200 p-4 overflow-y-auto flex-shrink-0">
+        <div className="w-56 md:w-60 lg:w-64 xl:w-72 bg-white/95 border-r border-slate-200 p-4 overflow-y-auto flex-shrink-0">
           {/* タイトル */}
           <div className="mb-6 text-center">
             <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900">
@@ -809,10 +904,10 @@ export default function AnalysisPage() {
         </div>
 
         {/* メインコンテンツ */}
-        <div className="flex-1 p-4 h-full overflow-hidden flex items-center justify-center">
+        <div ref={mainAreaRef} className="flex-1 p-4 h-full overflow-hidden flex items-center justify-center">
           <div className="h-full flex gap-4 items-center">
         {/* 中央：チェス盤 */}
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 h-full flex flex-col justify-center">
           <div className="bg-white/90 rounded-xl shadow-lg p-2 border border-slate-200">
             {/* 上側の取得駒（白視点なら黒、黒視点なら白） */}
             {fen && fen !== "start" && (() => {
@@ -857,13 +952,26 @@ export default function AnalysisPage() {
                 position={fen}
                 arePiecesDraggable={true}
                 onPieceDrop={handlePieceDrop}
+                onSquareClick={handleSquareClick}
                 boardWidth={dynamicBoardWidth}
                 boardOrientation={boardOrientation}
                 customDarkSquareStyle={{ backgroundColor: "#1e3a5f" }}
                 customLightSquareStyle={{ backgroundColor: "#e8eef5" }}
                 customSquareStyles={(() => {
                   const styles = {};
-                  
+
+                  // 選択されたマスをハイライト
+                  if (selectedSquare) {
+                    styles[selectedSquare] = { backgroundColor: "rgba(255, 255, 0, 0.6)" };
+                  }
+
+                  // 合法手のマスをハイライト
+                  legalMoves.forEach(square => {
+                    styles[square] = {
+                      background: "radial-gradient(circle, rgba(100, 100, 100, 0.7) 20%, transparent 20%)",
+                    };
+                  });
+
                   // Get the best move from the previous position
                   const previousBestMove = currentIndex > 0 
                     ? allMovesAnalysis[currentIndex - 1]?.bestMove 
@@ -901,11 +1009,23 @@ export default function AnalysisPage() {
                   // Highlight the best move suggestion for current position (green)
                   const currentBestMove = allMovesAnalysis[currentIndex]?.bestMove || bestMove;
                   if (currentBestMove) {
-                    styles[currentBestMove.substring(0, 2)] = { 
-                      backgroundColor: "rgba(0, 255, 0, 0.3)",
-                      border: "2px solid #00ff00"
-                    };
-                    styles[currentBestMove.substring(2, 4)] = { 
+                    const fromSquare = currentBestMove.substring(0, 2);
+                    const toSquare = currentBestMove.substring(2, 4);
+
+                    // 合法手と重なる場合はグレーの点も表示
+                    if (legalMoves.includes(toSquare)) {
+                      styles[toSquare] = {
+                        background: "radial-gradient(circle, rgba(100, 100, 100, 0.7) 20%, rgba(0, 255, 0, 0.3) 20%)",
+                        border: "2px solid #00ff00"
+                      };
+                    } else {
+                      styles[toSquare] = {
+                        backgroundColor: "rgba(0, 255, 0, 0.3)",
+                        border: "2px solid #00ff00"
+                      };
+                    }
+
+                    styles[fromSquare] = {
                       backgroundColor: "rgba(0, 255, 0, 0.3)",
                       border: "2px solid #00ff00"
                     };
@@ -1091,9 +1211,59 @@ export default function AnalysisPage() {
               <div className="space-y-3">
 
               {/* 手の評価 */}
-              {currentIndex >= 0 && (
+              {(currentIndex >= 0 || (isInVariationMode && variationLastMove)) && (
                 <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-3 border border-slate-200">
                   {(() => {
+                    // バリエーションモードの場合
+                    if (isInVariationMode && variationLastMove && variationEvalBefore !== null && evaluation !== null) {
+                      const prevEvalNum = evaluationToNumber(variationEvalBefore);
+                      const currEvalNum = evaluationToNumber(evaluation);
+                      const evalChange = currEvalNum - prevEvalNum;
+                      // 前の手番を判定（現在の手番の逆）
+                      const wasWhiteMove = chessGame.current?.turn() === 'b';
+                      const adjustedDiff = wasWhiteMove ? evalChange : -evalChange;
+
+                      let quality;
+                      if (adjustedDiff >= -0.2) quality = { quality: 'good', symbol: '', color: 'text-slate-500' };
+                      else if (adjustedDiff >= -0.5) quality = { quality: 'ok', symbol: '', color: 'text-slate-500' };
+                      else if (adjustedDiff >= -1.0) quality = { quality: 'inaccuracy', symbol: '?!', color: 'text-amber-500' };
+                      else if (adjustedDiff >= -3.0) quality = { quality: 'mistake', symbol: '?', color: 'text-orange-500' };
+                      else quality = { quality: 'blunder', symbol: '??', color: 'text-red-500' };
+
+                      return (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-semibold ${quality.color}`}>{variationLastMove}</span>
+                            {quality.symbol && (
+                              <span className={`font-bold ${quality.color}`}>{quality.symbol}</span>
+                            )}
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              quality.quality === 'good' ? 'bg-emerald-50 text-emerald-700' :
+                              quality.quality === 'ok' ? 'bg-slate-200 text-slate-600' :
+                              quality.quality === 'inaccuracy' ? 'bg-amber-100 text-amber-700' :
+                              quality.quality === 'mistake' ? 'bg-orange-100 text-orange-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {quality.quality === 'good' ? '良い手' :
+                               quality.quality === 'ok' ? '普通' :
+                               quality.quality === 'inaccuracy' ? '不正確' :
+                               quality.quality === 'mistake' ? 'ミス' :
+                               'ブランダー'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 text-sm font-mono">
+                            <span className="text-slate-500">{formatEvaluation(variationEvalBefore)}</span>
+                            <span className="text-slate-400">→</span>
+                            <span className="text-slate-800">{formatEvaluation(evaluation)}</span>
+                            <span className={`${adjustedDiff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              ({evalChange >= 0 ? '+' : ''}{evalChange.toFixed(2)})
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // 通常モードの場合
                     const quality = getMoveQuality(currentIndex);
                     const moveEval = moveEvaluations[currentIndex];
                     return quality && moveEval && moveEval.previousEvaluation !== null ? (
@@ -1146,22 +1316,22 @@ export default function AnalysisPage() {
           </div>
 
           {/* 手のリストパネル */}
-          <div className="bg-white/90 rounded-xl shadow-lg p-4 border border-slate-200 mt-4">
-            <h3 className="text-lg font-semibold mb-3 flex items-center text-slate-800">
-              <span className="mr-2">📋</span> 棋譜
+          <div className="bg-white/90 rounded-lg shadow-lg p-3 border border-slate-200 mt-3">
+            <h3 className="text-sm font-semibold mb-2 flex items-center text-slate-800">
+              <span className="mr-1">📋</span> 棋譜
             </h3>
-            <div ref={moveListRef} className="max-h-64 overflow-y-auto">
+            <div ref={moveListRef} className="max-h-48 overflow-y-auto">
               {history.length === 0 ? (
-                <p className="text-slate-500 text-center py-4">棋譜が読み込まれていません</p>
+                <p className="text-slate-500 text-center py-2 text-xs">棋譜が読み込まれていません</p>
               ) : (
                 <div>
                   {/* 初期位置 */}
                   <button
                     id="move-initial"
                     onClick={() => jumpToMove(-1)}
-                    className={`w-full text-left px-3 py-2 rounded-lg mb-2 transition font-medium ${
+                    className={`w-full text-left px-2 py-1 rounded-md mb-1 transition font-medium text-xs ${
                       currentIndex === -1
-                        ? "bg-blue-600 text-white ring-2 ring-blue-400"
+                        ? "bg-blue-600 text-white ring-1 ring-blue-400"
                         : "hover:bg-slate-100 text-slate-600"
                     }`}
                   >
@@ -1180,16 +1350,16 @@ export default function AnalysisPage() {
                       return (
                         <div key={rowIndex} className="flex items-stretch gap-1">
                           {/* 手番号 */}
-                          <div className="w-8 flex-shrink-0 flex items-center justify-center text-sm font-semibold text-slate-400">
+                          <div className="w-6 flex-shrink-0 flex items-center justify-center text-xs font-semibold text-slate-400">
                             {rowIndex + 1}.
                           </div>
                           {/* 白の手 */}
                           <button
                             id={`move-${whiteIndex}`}
                             onClick={() => jumpToMove(whiteIndex)}
-                            className={`flex-1 text-left px-3 py-2 rounded-lg transition font-mono text-base ${
+                            className={`flex-1 text-left px-2 py-1 rounded-md transition font-mono text-xs ${
                               currentIndex === whiteIndex
-                                ? "bg-blue-600 text-white ring-2 ring-blue-400 font-bold"
+                                ? "bg-blue-600 text-white ring-1 ring-blue-400 font-bold"
                                 : "bg-slate-50 hover:bg-slate-100 text-slate-800"
                             }`}
                           >
@@ -1207,9 +1377,9 @@ export default function AnalysisPage() {
                             <button
                               id={`move-${blackIndex}`}
                               onClick={() => jumpToMove(blackIndex)}
-                              className={`flex-1 text-left px-3 py-2 rounded-lg transition font-mono text-base ${
+                              className={`flex-1 text-left px-2 py-1 rounded-md transition font-mono text-xs ${
                                 currentIndex === blackIndex
-                                  ? "bg-blue-600 text-white ring-2 ring-blue-400 font-bold"
+                                  ? "bg-blue-600 text-white ring-1 ring-blue-400 font-bold"
                                   : "bg-slate-200 hover:bg-slate-300 text-slate-800"
                               }`}
                             >

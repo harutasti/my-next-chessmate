@@ -118,7 +118,7 @@ export default function EvaluationGraph({
         <span>評価の推移</span>
         <span>{`±${maxAbsValue.toFixed(1)} (cp)`}</span>
       </div>
-      <div className="relative h-48 w-full">
+      <div className="relative h-32 w-full">
         <svg
           viewBox="0 0 100 60"
           preserveAspectRatio="none"
