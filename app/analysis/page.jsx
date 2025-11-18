@@ -245,6 +245,12 @@ export default function AnalysisPage() {
       else if (viewportWidth >= 1024) rightSidebarWidth = 288; // lg: w-72
       else if (viewportWidth >= 768) rightSidebarWidth = 256; // md: w-64
 
+      // 左サイドバー幅も計算に含める（w-48～w-60）
+      let leftSidebarWidth = 192; // デフォルト (w-48)
+      if (viewportWidth >= 1280) leftSidebarWidth = 240; // xl: w-60
+      else if (viewportWidth >= 1024) leftSidebarWidth = 224; // lg: w-56
+      else if (viewportWidth >= 768) leftSidebarWidth = 208; // md: w-52
+
       // 幅方向はメインエリアの幅から右サイドバーとgapを引く
       const availableWidth = mainAreaWidth - rightSidebarWidth - 32;
 
@@ -812,63 +818,63 @@ export default function AnalysisPage() {
       />
       <div className="relative z-10 flex h-screen overflow-hidden">
         {/* 左サイドバー */}
-        <div className="w-56 md:w-60 lg:w-64 xl:w-72 bg-white/95 border-r border-slate-200 p-4 overflow-y-auto flex-shrink-0">
+        <div className="w-48 md:w-52 lg:w-56 xl:w-60 bg-white/95 border-r border-slate-200 p-3 overflow-y-auto flex-shrink-0">
           {/* タイトル */}
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900">
+          <div className="mb-4 text-center">
+            <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900">
               棋譜解析
             </h1>
-            <p className="text-slate-600 text-sm mt-1">PGN形式の棋譜を解析</p>
+            <p className="text-slate-600 text-xs mt-0.5">PGN形式の棋譜を解析</p>
           </div>
 
           {/* ホームに戻るボタン */}
           <button
             onClick={() => router.push("/")}
-            className="w-full mb-3 group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+            className="w-full mb-2 group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-1.5 px-3 rounded-md transition-all duration-300 shadow-md hover:shadow-lg text-sm"
           >
-            ← ホームに戻る
+            ← ホーム
           </button>
 
           {/* 反転ボタン */}
           <button
             onClick={() => setBoardOrientation(prev => prev === 'white' ? 'black' : 'white')}
-            className="w-full mb-6 group relative bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+            className="w-full mb-4 group relative bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white font-semibold py-1.5 px-3 rounded-md transition-all duration-300 shadow-md hover:shadow-lg text-sm"
           >
-            🔄 盤面を反転
+            🔄 反転
           </button>
 
           {/* PGN入力エリア */}
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-2 text-slate-800">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold mb-1.5 text-slate-800">
               📝 PGN入力
             </h3>
             <textarea
               value={pgn}
               onChange={(e) => setPgn(e.target.value)}
               placeholder="PGN形式の棋譜を貼り付け..."
-              rows="6"
-              className="w-full p-2 bg-slate-50 text-slate-900 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-xs"
+              rows="5"
+              className="w-full p-1.5 bg-slate-50 text-slate-900 border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none font-mono text-xs"
               disabled={isLoadingPgn}
             />
           </div>
 
           {/* 解析ボタン */}
-          <div className="mb-4 flex flex-col gap-2">
+          <div className="mb-3 flex flex-col gap-1.5">
             <button
               onClick={loadPgn}
-              className="w-full group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full group relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-1.5 px-3 rounded-md transition-all duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               disabled={isLoadingPgn || isAnalyzingAll}
             >
-              {isLoadingPgn ? "読み込み中..." : "PGNを読み込む"}
+              {isLoadingPgn ? "読み込み中..." : "PGN読み込み"}
             </button>
 
             <button
               onClick={() => analyzeAllMoves(history)}
-              className="w-full group relative bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:grayscale"
+              className="w-full group relative bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold py-1.5 px-3 rounded-md transition-all duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:grayscale text-xs"
               disabled={!engineReady || history.length === 0 || isAnalyzingAll || (allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0)}
               title={history.length === 0 ? "PGNを読み込むと解析可能" : (allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0) ? "既に解析済みです" : ""}
             >
-              <span className="flex items-center justify-center gap-1 text-sm">
+              <span className="flex items-center justify-center gap-1">
                 <span>📊</span>
                 {isAnalyzingAll ? `解析中 ${analysisProgress}%` : "全手を詳細解析"}
               </span>
@@ -876,25 +882,25 @@ export default function AnalysisPage() {
           </div>
 
           {/* ステータス表示 */}
-          <div className="mb-4">
+          <div className="mb-3">
             {errorMessage && (
-              <p className="text-red-500 text-xs mb-2">{errorMessage}</p>
+              <p className="text-red-500 text-xs mb-1">{errorMessage}</p>
             )}
             {engineReady && !isAnalyzingAll && (
               <div className="text-emerald-600 text-xs flex items-center">
-                <span className="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></span>
-                エンジン準備完了
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full mr-1.5 animate-pulse"></span>
+                準備完了
               </div>
             )}
             {isAnalyzingAll && (
               <div className="text-blue-600 text-xs">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
-                  <span>全手解析中... {analysisProgress}%</span>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="animate-spin rounded-full h-2.5 w-2.5 border-b-2 border-blue-500"></div>
+                  <span>解析中... {analysisProgress}%</span>
                 </div>
-                <div className="w-full bg-slate-200 rounded-full h-1.5">
+                <div className="w-full bg-slate-200 rounded-full h-1">
                   <div
-                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                    className="bg-blue-500 h-1 rounded-full transition-all duration-300"
                     style={{ width: `${analysisProgress}%` }}
                   />
                 </div>
@@ -1144,12 +1150,12 @@ export default function AnalysisPage() {
         <div className="w-60 md:w-64 lg:w-72 xl:w-80 flex-shrink-0 h-full overflow-y-auto">
           {/* バリエーションモード警告 */}
           {isInVariationMode && (
-            <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <div className="flex flex-col gap-2">
-                <span className="text-amber-600 text-sm">⚠️ 棋譜から外れています</span>
+            <div className="mb-3 bg-amber-50 border border-amber-200 rounded-md p-2">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-amber-600 text-xs">⚠️ 棋譜から外れています</span>
                 <button
                   onClick={returnToHistory}
-                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-1.5 px-3 rounded transition-all w-full"
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-1 px-2 rounded transition-all w-full"
                 >
                   棋譜に戻る
                 </button>
@@ -1157,16 +1163,16 @@ export default function AnalysisPage() {
             </div>
           )}
 
-          <div className="bg-red-50 rounded-xl shadow-lg p-4 border border-red-200">
-            <h3 className="text-lg font-semibold mb-3 flex items-center justify-between text-slate-800">
+          <div className="bg-red-50 rounded-lg shadow-lg p-3 border border-red-200">
+            <h3 className="text-sm font-semibold mb-2 flex items-center justify-between text-slate-800">
               <span className="flex items-center">
-                <span className="mr-2">🔍</span> エンジン解析
+                <span className="mr-1">🔍</span> エンジン解析
               </span>
               {/* 解析状態の表示 */}
               {allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0 && (
-                <div className="text-xs text-emerald-600 flex items-center gap-2">
-                  <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                  <span>全ての手を解析済み</span>
+                <div className="text-xs text-emerald-600 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                  <span>解析済み</span>
                 </div>
               )}
             </h3>
@@ -1182,8 +1188,8 @@ export default function AnalysisPage() {
 
             {/* 現在の局面の評価バー */}
             {(currentIndex >= -1 && allMovesAnalysis[currentIndex]) || (isInVariationMode && evaluation !== null) ? (
-              <div className="mb-4 mt-6">
-                <div className="h-8 bg-slate-800 rounded-lg overflow-hidden relative border border-slate-300">
+              <div className="mb-3 mt-4">
+                <div className="h-6 bg-slate-800 rounded-md overflow-hidden relative border border-slate-300">
                   <div
                     className="h-full bg-white transition-all duration-500"
                     style={{ width: `${(() => {
@@ -1193,26 +1199,26 @@ export default function AnalysisPage() {
                       return getEvalBarWidthForValue(eval_);
                     })()}%` }}
                   />
-                  <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold">
-                    <span className="bg-green-500 text-white px-2 py-0.5 rounded">
+                  <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold">
+                    <span className="bg-green-500 text-white px-1.5 py-0.5 rounded text-xs">
                       {isInVariationMode ? formatEvaluation(evaluation) : formatEvaluation(allMovesAnalysis[currentIndex].evaluation)}
                     </span>
                   </div>
                 </div>
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
-                  <span>黒優勢</span>
-                  <span>白優勢</span>
+                <div className="flex justify-between text-xs text-slate-500 mt-0.5">
+                  <span>黒</span>
+                  <span>白</span>
                 </div>
               </div>
             ) : null}
 
             {/* メトリクス情報 */}
             {allMovesAnalysis && Object.keys(allMovesAnalysis).length > 0 && (
-              <div className="space-y-3">
+              <div className="space-y-2">
 
               {/* 手の評価 */}
               {(currentIndex >= 0 || (isInVariationMode && variationLastMove)) && (
-                <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-3 border border-slate-200">
+                <div className="bg-gradient-to-br from-slate-50 to-white rounded-md p-2 border border-slate-200">
                   {(() => {
                     // バリエーションモードの場合
                     if (isInVariationMode && variationLastMove && variationEvalBefore !== null && evaluation !== null) {

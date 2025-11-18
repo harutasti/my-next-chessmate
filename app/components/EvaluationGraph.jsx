@@ -82,7 +82,7 @@ export default function EvaluationGraph({
 
   if (plottedPoints.length === 0) {
     return (
-      <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
+      <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-white/80 p-4 text-center text-xs text-slate-500">
         全手解析を実行すると評価グラフを表示します
       </div>
     );
@@ -113,12 +113,12 @@ export default function EvaluationGraph({
   const tooltipLeftPercent = clamp(activePoint.x, 4, 96);
 
   return (
-    <div className="mt-4 rounded-xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between text-xs font-medium text-slate-500">
+    <div className="mt-3 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
+      <div className="mb-2 flex items-center justify-between text-xs font-medium text-slate-500">
         <span>評価の推移</span>
-        <span>{`±${maxAbsValue.toFixed(1)} (cp)`}</span>
+        <span>{`±${maxAbsValue.toFixed(1)}`}</span>
       </div>
-      <div className="relative h-32 w-full">
+      <div className="relative h-24 w-full">
         <svg
           viewBox="0 0 100 60"
           preserveAspectRatio="none"
@@ -155,16 +155,14 @@ export default function EvaluationGraph({
           {/* 折れ線 */}
           <path d={pathD} fill="none" stroke="rgba(37,99,235,0.8)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* データ点 */}
+          {/* クリック領域（透明） */}
           {plottedPoints.map((point) => (
             <circle
               key={point.moveIndex}
               cx={point.x}
               cy={point.y}
-              r={point.moveIndex === activePoint.moveIndex ? 1.8 : 1.2}
-              fill={point.moveIndex === activePoint.moveIndex ? "rgba(37,99,235,0.95)" : "white"}
-              stroke={point.moveIndex === activePoint.moveIndex ? "rgba(37,99,235,0.95)" : "rgba(59,130,246,0.6)"}
-              strokeWidth={point.moveIndex === activePoint.moveIndex ? 0.6 : 0.4}
+              r={2}
+              fill="transparent"
               onMouseEnter={() => setHoveredMove(point.moveIndex)}
               onFocus={() => setHoveredMove(point.moveIndex)}
               onClick={() => onSelectMove?.(point.moveIndex)}
@@ -176,13 +174,32 @@ export default function EvaluationGraph({
                 }
               }}
               tabIndex={0}
-              className="cursor-pointer transition-all duration-150 ease-out"
+              className="cursor-pointer"
             />
           ))}
         </svg>
 
+        {/* 全データ点のマーカー（正円・HTML要素） */}
+        <div className="pointer-events-none absolute inset-0">
+          {plottedPoints.map((point) => (
+            <div
+              key={point.moveIndex}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full ${
+                point.moveIndex === activePoint?.moveIndex
+                  ? 'w-2 h-2 bg-blue-600 border border-white shadow-sm'
+                  : 'w-1.5 h-1.5 bg-white border border-blue-400'
+              }`}
+              style={{
+                left: `${point.x}%`,
+                top: `${(point.y / 60) * 100}%`,
+              }}
+            />
+          ))}
+        </div>
+
         {activePoint && (
           <div className="pointer-events-none absolute inset-0">
+            {/* ツールチップ */}
             <div
               className="absolute flex -translate-x-1/2 flex-col items-center text-xs"
               style={{
@@ -190,7 +207,7 @@ export default function EvaluationGraph({
                 top: `${tooltipTopPercent}%`,
               }}
             >
-              <div className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm">
+              <div className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm">
                 {formatEvaluation
                   ? formatEvaluation(activePoint.evaluation)
                   : activePoint.numeric.toFixed(2)}
