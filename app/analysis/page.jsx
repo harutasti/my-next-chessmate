@@ -702,19 +702,21 @@ export default function AnalysisPage() {
   
   // 評価値を数値に変換するヘルパー関数
   const evaluationToNumber = (evalValue) => {
-    if (typeof evalValue === 'number') return evalValue;
+    if (typeof evalValue === 'number') {
+      // 大きな数値はメイトとして扱い、端に揃える
+      if (evalValue >= 10) return 100;
+      if (evalValue <= -10) return -100;
+      return evalValue;
+    }
     if (typeof evalValue === 'string') {
       // メイト表記の処理
       if (evalValue.startsWith('M')) {
         const mateBody = evalValue.substring(1);
         const mateIn = parseInt(mateBody, 10);
-        if (mateIn === 0) {
-          if (mateBody.startsWith('+')) return 100;
-          if (mateBody.startsWith('-')) return -100;
-          return 0;
-        }
-        // メイトの場合は大きな値として扱う (符号付き)
-        return mateIn > 0 ? 100 - Math.abs(mateIn) : -100 + Math.abs(mateIn);
+        if (Number.isNaN(mateIn)) return 0;
+        // メイトの場合は全て端に揃える（手数に関係なく）
+        if (mateIn >= 0) return 100;
+        return -100;
       }
     }
     return 0; // デフォルト値

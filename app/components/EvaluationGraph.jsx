@@ -109,7 +109,7 @@ export default function EvaluationGraph({
 
   // ツールチップの位置を動的に調整（丸が上半分なら下に、下半分なら上に表示）
   const isPointInUpperHalf = activePoint.y < 30;
-  const tooltipTopPercent = isPointInUpperHalf ? (activePoint.y / 60) * 100 + 15 : (activePoint.y / 60) * 100 - 15;
+  const tooltipTopPercent = isPointInUpperHalf ? (activePoint.y / 60) * 100 + 25 : (activePoint.y / 60) * 100 - 40;
   const tooltipLeftPercent = clamp(activePoint.x, 4, 96);
 
   return (
@@ -207,7 +207,7 @@ export default function EvaluationGraph({
                 top: `${tooltipTopPercent}%`,
               }}
             >
-              <div className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm">
+              <div className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm whitespace-nowrap">
                 {formatEvaluation
                   ? formatEvaluation(activePoint.evaluation)
                   : activePoint.numeric.toFixed(2)}
