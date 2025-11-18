@@ -51,7 +51,9 @@ export default function EvaluationGraph({
 
     return points.map((point, idx) => {
       let clampedValue = clamp(point.numeric, -maxAbsValue, maxAbsValue);
-      const x = total === 0 ? 0 : (idx / total) * 100;
+      // 左右に余白を設けて円が切れないようにする
+      const xPadding = 2;
+      const x = total === 0 ? xPadding : xPadding + (idx / total) * (100 - xPadding * 2);
       let y;
       if (point.numeric >= maxAbsValue) {
         y = padding;
@@ -94,7 +96,8 @@ export default function EvaluationGraph({
     .join(" ");
 
   const bottomY = 60 - padding;
-  const areaPathD = `${pathD} L 100 ${bottomY} L 0 ${bottomY} Z`;
+  const xPadding = 2;
+  const areaPathD = `${pathD} L ${100 - xPadding} ${bottomY} L ${xPadding} ${bottomY} Z`;
 
   const activeMoveIndex = hoveredMove ?? currentIndex;
   const activePoint =
@@ -195,10 +198,6 @@ export default function EvaluationGraph({
             </div>
           </div>
         )}
-      </div>
-      <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
-        <span>黒有利</span>
-        <span>白有利</span>
       </div>
     </div>
   );

@@ -220,14 +220,30 @@ export default function AnalysisPage() {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
-  // ボードサイズの動的調整
+  // ボードサイズの動的調整（高さベース・チェス盤中心）
   useEffect(() => {
     const calculateBoardSize = () => {
-      if (boardWrapperRef.current) {
-        const containerWidth = boardWrapperRef.current.offsetWidth;
-        // パディングを考慮してほぼ全幅を使用
-        setDynamicBoardWidth(Math.min(containerWidth - 8, 800));
-      }
+      // ビューポートサイズを取得
+      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth;
+
+      // 高さ方向: パディング + 取得駒表示 + ナビボタン + 凡例
+      const reservedHeight = 32 + 40 + 40 + 56 + 40 + 16; // 224px
+      const availableHeight = viewportHeight - reservedHeight;
+
+      // サイドバー幅を画面幅に応じて計算
+      let sidebarWidth = 240; // デフォルト (w-60)
+      if (viewportWidth >= 1280) sidebarWidth = 320; // xl: w-80
+      else if (viewportWidth >= 1024) sidebarWidth = 288; // lg: w-72
+      else if (viewportWidth >= 768) sidebarWidth = 256; // md: w-64
+
+      // 幅方向: 左サイドバー + 右パネル + パディング + gap
+      const reservedWidth = sidebarWidth * 2 + 32 + 32;
+      const availableWidth = viewportWidth - reservedWidth;
+
+      // 高さと幅の小さい方を採用（上限なし）
+      const boardSize = Math.min(availableHeight, availableWidth);
+      setDynamicBoardWidth(Math.max(boardSize, 300));
     };
     calculateBoardSize();
     window.addEventListener("resize", calculateBoardSize);
@@ -332,10 +348,16 @@ export default function AnalysisPage() {
     } else {
       setLastMove(null);
     }
-    
+
     // 評価値をリセット
     setPreviousEvaluation(null);
-  }, [currentIndex, history]);
+
+    // バリエーションモードを解除
+    if (isInVariationMode) {
+      setIsInVariationMode(false);
+      setSavedHistoryPosition(null);
+    }
+  }, [currentIndex, history, isInVariationMode]);
 
   // 特定の手へジャンプ
   const jumpToMove = (index) => {
@@ -693,9 +715,9 @@ export default function AnalysisPage() {
           background: `radial-gradient(circle at ${mousePosition.x}px ${mousePosition.y}px, rgba(59, 130, 246, 0.25), transparent 55%)`,
         }}
       />
-      <div className="relative z-10 flex min-h-screen">
+      <div className="relative z-10 flex h-screen overflow-hidden">
         {/* 左サイドバー */}
-        <div className="w-80 bg-white/95 border-r border-slate-200 p-4 overflow-y-auto">
+        <div className="w-60 md:w-64 lg:w-72 xl:w-80 bg-white/95 border-r border-slate-200 p-4 overflow-y-auto flex-shrink-0">
           {/* タイトル */}
           <div className="mb-6 text-center">
             <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900">
@@ -787,10 +809,10 @@ export default function AnalysisPage() {
         </div>
 
         {/* メインコンテンツ */}
-        <div className="flex-1 p-4 overflow-y-auto">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 左側・中央：チェス盤（より大きく） */}
-        <div className="lg:col-span-2">
+        <div className="flex-1 p-4 h-full overflow-hidden flex items-center justify-center">
+          <div className="h-full flex gap-4 items-center">
+        {/* 中央：チェス盤 */}
+        <div className="flex-shrink-0">
           <div className="bg-white/90 rounded-xl shadow-lg p-2 border border-slate-200">
             {/* 上側の取得駒（白視点なら黒、黒視点なら白） */}
             {fen && fen !== "start" && (() => {
@@ -830,7 +852,7 @@ export default function AnalysisPage() {
               );
             })()}
 
-            <div ref={boardWrapperRef} className="w-full aspect-square">
+            <div ref={boardWrapperRef} className="w-full flex justify-center">
               <Chessboard
                 position={fen}
                 arePiecesDraggable={true}
@@ -932,23 +954,6 @@ export default function AnalysisPage() {
               );
             })()}
 
-            {/* バリエーションモード警告 */}
-            {isInVariationMode && (
-              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-amber-600 text-sm">⚠️ 手動で駒を動かしています（棋譜から外れています）</span>
-                  </div>
-                  <button
-                    onClick={returnToHistory}
-                    className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-1 px-3 rounded transition-all"
-                  >
-                    棋譜に戻る
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* ナビゲーションボタン */}
             <div className="grid grid-cols-4 gap-2 mt-2">
               <button
@@ -1020,7 +1025,22 @@ export default function AnalysisPage() {
         </div>
 
         {/* 右側：解析パネル */}
-        <div className="lg:col-span-1">
+        <div className="w-60 md:w-64 lg:w-72 xl:w-80 flex-shrink-0 h-full overflow-y-auto">
+          {/* バリエーションモード警告 */}
+          {isInVariationMode && (
+            <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <div className="flex flex-col gap-2">
+                <span className="text-amber-600 text-sm">⚠️ 棋譜から外れています</span>
+                <button
+                  onClick={returnToHistory}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-1.5 px-3 rounded transition-all w-full"
+                >
+                  棋譜に戻る
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="bg-red-50 rounded-xl shadow-lg p-4 border border-red-200">
             <h3 className="text-lg font-semibold mb-3 flex items-center justify-between text-slate-800">
               <span className="flex items-center">
@@ -1076,23 +1096,18 @@ export default function AnalysisPage() {
 
               {/* 手の評価 */}
               {currentIndex >= 0 && (
-                <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-4 border border-slate-200">
-                  <div className="text-sm text-slate-600 font-medium mb-3">現在の手の評価</div>
-                  <div className="space-y-3">
-                    {/* 手の品質 */}
-                    {(() => {
-                      const quality = getMoveQuality(currentIndex);
-                      return quality ? (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold flex items-center gap-2">
-                            <span className={quality.color}>{history[currentIndex].san}</span>
-                            {quality.symbol && (
-                              <span className={`text-lg font-bold ${quality.color}`}>
-                                {quality.symbol}
-                              </span>
-                            )}
-                          </span>
-                          <span className={`text-xs px-2 py-1 rounded ${
+                <div className="bg-gradient-to-br from-slate-50 to-white rounded-lg p-3 border border-slate-200">
+                  {(() => {
+                    const quality = getMoveQuality(currentIndex);
+                    const moveEval = moveEvaluations[currentIndex];
+                    return quality && moveEval && moveEval.previousEvaluation !== null ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold ${quality.color}`}>{history[currentIndex].san}</span>
+                          {quality.symbol && (
+                            <span className={`font-bold ${quality.color}`}>{quality.symbol}</span>
+                          )}
+                          <span className={`text-xs px-2 py-0.5 rounded ${
                             quality.quality === 'best' ? 'bg-emerald-100 text-emerald-700' :
                             quality.quality === 'good' ? 'bg-emerald-50 text-emerald-700' :
                             quality.quality === 'ok' ? 'bg-slate-200 text-slate-600' :
@@ -1108,88 +1123,30 @@ export default function AnalysisPage() {
                              'ブランダー'}
                           </span>
                         </div>
-                      ) : (
-                        <div className="text-xs text-slate-500">
-                          <span className="inline-block px-2 py-1 bg-slate-100 rounded">
-                            前の局面を解析してから、この局面を解析してください
-                          </span>
-                        </div>
-                      );
-                    })()}
-
-                    {/* 評価値の変化 */}
-                    {moveEvaluations[currentIndex] && moveEvaluations[currentIndex].previousEvaluation !== null && (
-                      <div className="bg-slate-100 rounded-lg p-2">
-                        <div className="text-xs text-slate-500 mb-1">評価値の変化</div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-mono text-slate-700">
-                            {formatEvaluation(moveEvaluations[currentIndex].previousEvaluation)}
-                          </span>
-                          <span className="text-slate-500">→</span>
-                          <span className="text-sm font-mono font-semibold text-slate-900">
-                            {formatEvaluation(moveEvaluations[currentIndex].evaluation)}
-                          </span>
-                          <span className={`text-sm font-semibold ${
-                            (evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation)) * 
+                        <div className="flex items-center gap-1 text-sm font-mono">
+                          <span className="text-slate-500">{formatEvaluation(moveEval.previousEvaluation)}</span>
+                          <span className="text-slate-400">→</span>
+                          <span className="text-slate-800">{formatEvaluation(moveEval.evaluation)}</span>
+                          <span className={`${
+                            (evaluationToNumber(moveEval.evaluation) - evaluationToNumber(moveEval.previousEvaluation)) *
                             (currentIndex % 2 === 0 ? 1 : -1) >= 0
                               ? 'text-emerald-600' : 'text-red-500'
                           }`}>
-                            ({(evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation) >= 0 ? '+' : '')}
-                            {(evaluationToNumber(moveEvaluations[currentIndex].evaluation) - evaluationToNumber(moveEvaluations[currentIndex].previousEvaluation)).toFixed(2)})
+                            ({(evaluationToNumber(moveEval.evaluation) - evaluationToNumber(moveEval.previousEvaluation) >= 0 ? '+' : '')}
+                            {(evaluationToNumber(moveEval.evaluation) - evaluationToNumber(moveEval.previousEvaluation)).toFixed(2)})
                           </span>
                         </div>
                       </div>
-                    )}
-                    
-                    {/* 現在の評価 */}
-                    <div className="text-xs text-slate-500">
-                      {evaluation && typeof evaluation === 'number' && (
-                        <span className={`inline-block px-2 py-1 rounded ${
-                          evaluation > 0.5 ? 'bg-emerald-100 text-emerald-700' :
-                          evaluation < -0.5 ? 'bg-red-100 text-red-700' :
-                          'bg-slate-200 text-slate-700'
-                        }`}>
-                          {(() => {
-                            // Display from current player's perspective
-                            const isBlackTurn = chessGame.current?.turn() === 'b';
-                            const adjustedEval = isBlackTurn ? -evaluation : evaluation;
-                            return adjustedEval > 0 ? '手番優勢' : adjustedEval < 0 ? '相手優勢' : '互角';
-                          })()}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                    ) : (
+                      <div className="text-xs text-slate-500 text-center">
+                        解析データがありません
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
           )}
-          </div>
-
-          {/* 現在の局面情報 */}
-          <div className="bg-white/90 rounded-xl shadow-lg p-4 border border-slate-200 mt-4">
-            <h3 className="text-lg font-semibold mb-3 flex items-center text-slate-800">
-              <span className="mr-2">📍</span> 現在の局面
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-600">手数:</span>
-                <span className="font-mono text-slate-800">
-                  {currentIndex === -1 ? "初期位置" : `${currentIndex + 1}手目`}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">手番:</span>
-                <span className="text-slate-800">{chessGame.current?.turn() === "w" ? "白番" : "黒番"}</span>
-              </div>
-              {currentIndex >= 0 && history[currentIndex] && (
-                <div className="flex justify-between">
-                  <span className="text-slate-600">最後の手:</span>
-                  <span className="font-mono font-semibold text-slate-900">
-                    {history[currentIndex].san}
-                  </span>
-                </div>
-              )}
-            </div>
           </div>
 
           {/* 手のリストパネル */}
