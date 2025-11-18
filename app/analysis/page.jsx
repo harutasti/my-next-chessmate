@@ -955,50 +955,46 @@ export default function AnalysisPage() {
             })()}
 
             {/* ナビゲーションボタン */}
-            <div className="grid grid-cols-4 gap-2 mt-2">
+            <div className="grid grid-cols-4 gap-1 mt-2">
               <button
                 onClick={() => navigateMoves("first")}
-                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-medium py-1 px-2 rounded-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || (currentIndex === -1 && history.length === 0)}
               >
-                <span className="flex items-center justify-center gap-1">
-                  <span className="text-lg">⏮️</span>
-                  <span className="text-xs hidden sm:inline">最初</span>
+                <span className="flex items-center justify-center gap-0.5">
+                  <span className="text-sm">⏮️</span>
+                  <span className="text-xs">最初</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
               <button
                 onClick={() => navigateMoves("prev")}
-                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-medium py-1 px-2 rounded-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || currentIndex < 0}
               >
-                <span className="flex items-center justify-center gap-1">
-                  <span className="text-lg">◀️</span>
-                  <span className="text-xs hidden sm:inline">戻る</span>
+                <span className="flex items-center justify-center gap-0.5">
+                  <span className="text-sm">◀️</span>
+                  <span className="text-xs">戻る</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
               <button
                 onClick={() => navigateMoves("next")}
-                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-medium py-1 px-2 rounded-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || currentIndex >= history.length - 1}
               >
-                <span className="flex items-center justify-center gap-1">
-                  <span className="text-xs hidden sm:inline">進む</span>
-                  <span className="text-lg">▶️</span>
+                <span className="flex items-center justify-center gap-0.5">
+                  <span className="text-xs">進む</span>
+                  <span className="text-sm">▶️</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
               <button
                 onClick={() => navigateMoves("last")}
-                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-700 font-medium py-1 px-2 rounded-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                 disabled={isLoadingPgn || history.length === 0 || currentIndex === history.length - 1}
               >
-                <span className="flex items-center justify-center gap-1">
-                  <span className="text-xs hidden sm:inline">最後</span>
-                  <span className="text-lg">⏭️</span>
+                <span className="flex items-center justify-center gap-0.5">
+                  <span className="text-xs">最後</span>
+                  <span className="text-sm">⏭️</span>
                 </span>
-                <div className="absolute inset-0 rounded-xl bg-blue-100/0 group-hover:bg-blue-100/40 transition-all duration-200"></div>
               </button>
             </div>
             
